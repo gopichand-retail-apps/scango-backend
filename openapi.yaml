@@ -1,0 +1,315 @@
+openapi: 3.1.0
+info:
+  title: ScanGo Checkout API
+  version: 1.0.0
+  description: Local synthetic checkout simulator; no live payment processing or identity authorization.
+servers:
+  - url: http://127.0.0.1:5112/api/v1
+paths:
+  /version:
+    get:
+      operationId: getApplicationVersion
+      summary: Read the backend artifact version
+      responses:
+        "200":
+          description: API service name and SemVer release from the package manifest.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [service, version]
+                    properties:
+                      service: { type: string, const: scango-api }
+                      version: { type: string, pattern: '^\\d+\\.\\d+\\.\\d+$' }
+  /health:
+    get:
+      responses:
+        "200":
+          description: API and local SQLite readiness.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthEnvelope"
+  /catalog:
+    get:
+      responses:
+        "200":
+          description: Synthetic catalog with API-owned prices and weight settings.
+  /sessions:
+    post:
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "201":
+          description: New scanning session or idempotent replay.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /sessions/{sessionId}:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      responses:
+        "200":
+          description: Server-calculated session, basket, and integer-cent totals.
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /sessions/{sessionId}/scan:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [barcode]
+              properties:
+                barcode: { type: string, minLength: 1, maxLength: 40 }
+                source: { type: string, enum: [barcode, search], default: barcode }
+      responses:
+        "200":
+          description: Updated basket from an API-resolved product.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /sessions/{sessionId}/scan-batch:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [barcodes]
+              properties:
+                barcodes:
+                  type: array
+                  minItems: 1
+                  maxItems: 20
+                  items: { type: string, minLength: 1, maxLength: 40 }
+      responses:
+        "200":
+          description: Atomic batch result; any invalid code rolls back the full batch.
+        "422":
+          $ref: "#/components/responses/InvalidInput"
+  /sessions/{sessionId}/quantity:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [productId, delta]
+              properties:
+                productId: { type: string, minLength: 1, maxLength: 64 }
+                delta: { type: integer, minimum: -20, maximum: 20, not: { const: 0 } }
+      responses:
+        "200":
+          description: Updated basket and totals.
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /sessions/{sessionId}/coupon:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code: { type: string, maxLength: 40 }
+      responses:
+        "200":
+          description: Updated coupon and server-calculated totals.
+        "422":
+          $ref: "#/components/responses/InvalidInput"
+  /sessions/{sessionId}/weight-check:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [simulatedWeightGrams]
+              properties:
+                simulatedWeightGrams: { type: integer, minimum: 1, maximum: 30000 }
+      responses:
+        "200":
+          description: Passed weight or held for intervention.
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /sessions/{sessionId}/intervention:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action]
+              properties:
+                action: { type: string, enum: [approve_weight, remove_item] }
+      responses:
+        "200":
+          description: Simulated attendant action and updated session.
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /sessions/{sessionId}/checkout:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: Server-calculated quote and ready-to-pay state.
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/InvalidInput"
+  /sessions/{sessionId}/tenders:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [method, outcome]
+              properties:
+                method: { type: string, enum: [cash, simulated_card] }
+                outcome: { type: string, enum: [approve, decline] }
+      responses:
+        "200":
+          description: Local simulated tender result; no funds are moved.
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /sessions/{sessionId}/receipt:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      responses:
+        "200":
+          description: Persisted receipt snapshot.
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "201":
+          description: Receipt issued after approved simulated tender.
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /sessions/{sessionId}/reset:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: Persisted reset state; previous session records remain available.
+        "409":
+          $ref: "#/components/responses/Conflict"
+components:
+  parameters:
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    SessionId:
+      in: path
+      name: sessionId
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    BadRequest:
+      description: Invalid JSON, request schema, or idempotency key.
+    NotFound:
+      description: Session or synthetic product not found.
+    Conflict:
+      description: Checkout state does not allow the requested transition.
+    InvalidInput:
+      description: Invalid barcode, coupon, quantity, or scale input.
+  schemas:
+    HealthEnvelope:
+      type: object
+      properties:
+        data:
+          type: object
+          required: [status, service, storage]
+          properties:
+            status: { type: string, const: ok }
+            service: { type: string, const: scango-api }
+            storage: { type: string, const: sqlite }

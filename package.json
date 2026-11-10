@@ -1,0 +1,33 @@
+{
+  "name": "scango-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "node --watch src/server.mjs",
+    "start": "node src/server.mjs",
+    "test": "node --test",
+    "test:coverage": "c8 --all --include='src/**/*.mjs' --exclude='src/**/*.test.mjs' --check-coverage --lines 90 --statements 90 --functions 90 --branches 90 --reporter=text --reporter=lcov --reporter=json-summary --report-dir=coverage node --test && node scripts/check-critical-coverage.mjs",
+    "check": "node --check src/server.mjs && node --check src/routes.mjs && node --check src/content-model.schema.mjs && node --check src/checkout.machine.mjs && node --check src/checkout.schema.mjs && node --check src/checkout.repository.mjs && node --check src/checkout.service.mjs && node --check scripts/check-critical-coverage.mjs",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write \"src/**/*.mjs\" \"scripts/**/*.mjs\" \"*.mjs\" \"*.yaml\"",
+    "format:check": "prettier --check \"src/**/*.mjs\" \"scripts/**/*.mjs\" \"*.mjs\" \"*.yaml\""
+  },
+  "overrides": {
+    "glob": "14.0.2",
+    "minimatch": "11.0.1"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "c8": "^12.0.0",
+    "eslint": "^9.18.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.9.10"
+  }
+}
