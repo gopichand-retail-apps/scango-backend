@@ -1,5 +1,21 @@
 # ScanGo Backend
 
+[Architecture guide](docs/architecture.md) — source map, workflows, contracts, data, security, and checks.
+
+## Repository layout and deployment boundary
+
+This independent repository owns ScanGo's Node.js ESM API and authoritative SQLite state. The UI is the separate [scango-frontend](https://github.com/gopichand-retail-apps/scango-frontend) repository. Keep the current directory names, Git histories, origins, and independent builds.
+
+The Vercel configuration belongs to the frontend only. This API has no verified Vercel deployment adapter. The local file database is not shared durable storage for stateless function instances. Do not deploy the local simulator as a public API or point it at real records.
+
+Use Node **24.15.0**, npm, and the committed package-lock.json. From the full Retail Apps workspace, `./scripts/Start-Apps.ps1 -App ScanGo` uses the correct built/native entry after setup. With the required sibling frontend available, install with `npm.cmd ci` and start with `npm.cmd start`; no API build is needed.
+
+Health: http://127.0.0.1:5112/api/v1/health. Direct startup stores data under `data/scango.sqlite`; the workspace launcher can select a separate app-owned path. The [API contract](openapi.yaml) and [canonical architecture](docs/architecture.md) describe the existing routes and trust boundaries. The architecture guide is inside this repository.
+
+The API reads its seed/content contract from the adjacent frontend at `../scango-frontend/public/scango-model.json`. Clone both repositories as siblings before starting it; this existing file dependency is not a network integration. Backend configuration is read from process environment variables; creating a .env file alone does not load it.
+
+Known release gaps: Shopper session ownership and staff authorization are absent. Two Windows backend tests and critical server coverage fail in the baseline; receipt-only print CSS is absent. Separate IT fixes do not change this baseline.
+
 The Node.js API owns the checkout state machine, catalog/coupon validation, price and tax calculation, and local SQLite persistence. It is the only database client in the application.
 
 ## Run
@@ -49,4 +65,4 @@ separate in-memory API instance, leaving the default database untouched.
 
 ## Security boundary
 
-The service is loopback-only and checks configured browser origins when an `Origin` header is supplied. No shopper, attendant, or administrator authentication/authorization exists. The attendant intervention is explicitly simulated. Before any external or multi-user deployment, add verified identity, server-derived owner scope, role policies, TLS, managed data controls, and security review. See [`../docs/security/README.md`](../docs/security/README.md).
+The service is loopback-only and checks configured browser origins when an `Origin` header is supplied. No shopper, attendant, or administrator authentication/authorization exists. The attendant intervention is explicitly simulated. Before any external or multi-user deployment, add verified identity, server-derived owner scope, role policies, TLS, managed data controls, and security review. See [security notes](docs/architecture.md#8-security-privacy-and-egress).

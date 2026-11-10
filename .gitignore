@@ -10,3 +10,7 @@ data/*.sqlite-shm
 data/*.sqlite-wal
 *.war
 .DS_Store
+
+# Local deployment metadata and private environment overrides
+.vercel/
+!.env.vercel.example
