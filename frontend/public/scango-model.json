@@ -1,0 +1,326 @@
+{
+  "version": 1,
+  "appId": "scango",
+  "locale": "en-US",
+  "messages": {
+    "kioskEyebrow": "QUICKSTOP MARKET / SELF CHECKOUT",
+    "marketMonogram": "QS",
+    "marketName": "QuickStop",
+    "marketDescriptor": "Market",
+    "approvedMark": "OK",
+    "releaseVersion": "Version",
+    "welcomeTitle": "A better kind of checkout.",
+    "welcomeDescription": "Scan a few favorites, confirm the basket, and finish with a payment simulation.",
+    "startCheckout": "Start checkout",
+    "sessionLabel": "Checkout session",
+    "sessionReady": "Ready to scan",
+    "scanStage": "Scan items",
+    "reviewStage": "Review basket",
+    "payStage": "Simulated payment",
+    "receiptStage": "Receipt",
+    "searchProducts": "Find an item",
+    "searchPlaceholder": "Search the market",
+    "barcode": "Barcode or item code",
+    "barcodePlaceholder": "Scan or enter item code",
+    "scanItem": "Add item",
+    "catalogHeading": "Market favorites",
+    "allCategories": "Everything",
+    "addToBasket": "Add to basket",
+    "itemAdded": "Item added",
+    "basketHeading": "Your basket",
+    "emptyBasket": "Your basket is waiting for its first item.",
+    "quantity": "Quantity",
+    "decreaseQuantity": "Remove one",
+    "increaseQuantity": "Add one",
+    "removeItem": "Remove item",
+    "couponLabel": "Coupon code",
+    "couponPlaceholder": "Try FRESH10",
+    "applyCoupon": "Apply coupon",
+    "couponApplied": "Coupon applied",
+    "couponRemoved": "Coupon removed",
+    "subtotal": "Subtotal",
+    "discount": "Discount",
+    "estimatedTax": "Estimated tax",
+    "total": "Total due",
+    "checkout": "Review and pay",
+    "weightCheckTitle": "Quick scale check",
+    "weightExpected": "Expected weight",
+    "weightMeasured": "Simulated scale reading (g)",
+    "confirmWeight": "Confirm scale reading",
+    "weightPassed": "Scale check passed",
+    "weightMismatch": "A team member needs to check this item.",
+    "attendantTitle": "Team member check",
+    "attendantDescription": "This local simulation does not verify staff identity.",
+    "approveWeight": "Approve simulated check",
+    "removeLastScanned": "Remove last scanned item",
+    "paymentTitle": "Payment simulator",
+    "paymentDisclaimer": "No card number, security code, bank detail, or real payment token is requested or stored.",
+    "tenderMethod": "Tender method",
+    "cashSimulation": "Cash simulation",
+    "cardSimulation": "Card simulation",
+    "simulationOutcome": "Simulation result",
+    "approveSimulation": "Approve this test payment",
+    "declineSimulation": "Decline this test payment",
+    "runPayment": "Run payment simulation",
+    "paymentApproved": "Payment approved in simulation",
+    "paymentDeclined": "The simulated payment was declined. Try again or choose another method.",
+    "receiptTitle": "All set.",
+    "receiptDescription": "Your simulated checkout is complete.",
+    "receiptNumber": "Receipt",
+    "issuedAt": "Completed",
+    "printReceipt": "Print receipt",
+    "newCheckout": "Start new checkout",
+    "cancelCheckout": "Cancel checkout",
+    "resetCheckout": "Reset kiosk",
+    "resetConfirm": "Reset this checkout and return to the welcome screen?",
+    "themeToggle": "Toggle light and dark mode",
+    "serviceConnected": "Kiosk service connected",
+    "serviceUnavailable": "Kiosk service unavailable",
+    "loading": "Opening the market...",
+    "retry": "Try again",
+    "emptySearch": "No matching market items. Try another search.",
+    "itemCount": "items",
+    "taxNote": "Tax calculated by the kiosk simulator",
+    "checkoutDisclaimer": "All prices and totals are calculated by the local API.",
+    "errorGeneric": "That action could not be completed. Check the basket and try again.",
+    "invalidBarcode": "We could not find that item code. Check it and try again.",
+    "invalidCoupon": "That coupon is not eligible for this basket.",
+    "couponMinimum": "Add more eligible items to use this coupon.",
+    "scaleOutOfRange": "Enter a scale reading within the supported range.",
+    "sessionExpired": "This checkout is no longer active. Start a new checkout.",
+    "stateScanning": "Scanning",
+    "stateWeightCheck": "Scale check",
+    "stateWeightCheckPending": "Scale check required",
+    "stateAttentionRequired": "Team member check",
+    "stateReadyToPay": "Ready to pay",
+    "statePaymentApproved": "Paid in simulation",
+    "statePaid": "Paid in simulation",
+    "stateReceiptIssued": "Receipt ready",
+    "stateReset": "Checkout reset",
+    "stateCancelled": "Checkout cancelled",
+    "roleShopper": "Shopper",
+    "roleAttendant": "Attendant action",
+    "roleAdministrator": "Administrator",
+    "issueReceipt": "View receipt",
+    "categories": {
+      "produce": "Produce",
+      "bakery": "Bakery",
+      "dairy": "Dairy",
+      "pantry": "Pantry",
+      "floral": "Floral"
+    },
+    "frequencies": {
+      "each": "each",
+      "bag": "bag",
+      "dozen": "dozen",
+      "bunch": "bunch",
+      "loaf": "loaf"
+    },
+    "errors": {
+      "invalidRequest": "The request could not be understood.",
+      "notFound": "The requested checkout item was not found.",
+      "originNotAllowed": "This application origin is not allowed.",
+      "rateLimited": "Too many requests. Try again shortly.",
+      "server": "The kiosk service could not complete this action.",
+      "invalidState": "This checkout action is not available in the current state.",
+      "invalidQuantity": "Choose a valid item quantity.",
+      "invalidScale": "The simulated scale reading is outside the allowed range."
+    }
+  },
+  "data": {
+    "app": {
+      "name": "ScanGo",
+      "descriptor": "Self-checkout simulator",
+      "description": "A quick, transparent self-checkout for a fictional neighborhood market.",
+      "currency": "USD",
+      "themeStorageKey": "scango-theme",
+      "defaultTheme": "light",
+      "maximumScanBatch": 20,
+      "maximumBarcodeLength": 40,
+      "maximumQuantity": 20,
+      "maximumBodyBytes": 16384,
+      "taxRateBasisPoints": 825,
+      "scaleMinimumGrams": 1,
+      "scaleMaximumGrams": 30000
+    },
+    "categories": [
+      {
+        "id": "produce",
+        "labelKey": "produce",
+        "color": "#71937a"
+      },
+      {
+        "id": "bakery",
+        "labelKey": "bakery",
+        "color": "#b67a5e"
+      },
+      {
+        "id": "dairy",
+        "labelKey": "dairy",
+        "color": "#66859b"
+      },
+      {
+        "id": "pantry",
+        "labelKey": "pantry",
+        "color": "#9b8b56"
+      },
+      {
+        "id": "floral",
+        "labelKey": "floral",
+        "color": "#a16e79"
+      }
+    ],
+    "products": [
+      {
+        "id": "fruit-apples",
+        "barcode": "QS-APL-014",
+        "name": "Orchard apples",
+        "description": "Crisp red apples from the local orchard.",
+        "categoryId": "produce",
+        "priceCents": 449,
+        "unitKey": "bag",
+        "image": "/products/apples.jpg",
+        "weightCheck": {
+          "required": true,
+          "expectedGrams": 980,
+          "toleranceGrams": 80
+        }
+      },
+      {
+        "id": "fruit-bananas",
+        "barcode": "QS-BAN-022",
+        "name": "Golden bananas",
+        "description": "A sunny bunch for breakfast and snacks.",
+        "categoryId": "produce",
+        "priceCents": 299,
+        "unitKey": "bunch",
+        "image": "/products/bananas.jpg",
+        "weightCheck": {
+          "required": true,
+          "expectedGrams": 760,
+          "toleranceGrams": 90
+        }
+      },
+      {
+        "id": "bread-country",
+        "barcode": "QS-BRD-031",
+        "name": "Country sourdough",
+        "description": "Slow-fermented loaf with a crisp crust.",
+        "categoryId": "bakery",
+        "priceCents": 549,
+        "unitKey": "loaf",
+        "image": "/products/bread.jpg",
+        "weightCheck": {
+          "required": false,
+          "expectedGrams": 0,
+          "toleranceGrams": 0
+        }
+      },
+      {
+        "id": "dairy-milk",
+        "barcode": "QS-MLK-044",
+        "name": "Cream-top milk",
+        "description": "One quart of locally bottled whole milk.",
+        "categoryId": "dairy",
+        "priceCents": 429,
+        "unitKey": "each",
+        "image": "/products/milk.jpg",
+        "weightCheck": {
+          "required": false,
+          "expectedGrams": 0,
+          "toleranceGrams": 0
+        }
+      },
+      {
+        "id": "dairy-eggs",
+        "barcode": "QS-EGG-056",
+        "name": "Farm eggs",
+        "description": "A dozen large eggs from a nearby farm.",
+        "categoryId": "dairy",
+        "priceCents": 699,
+        "unitKey": "dozen",
+        "image": "/products/eggs.jpg",
+        "weightCheck": {
+          "required": false,
+          "expectedGrams": 0,
+          "toleranceGrams": 0
+        }
+      },
+      {
+        "id": "pantry-coffee",
+        "barcode": "QS-COF-063",
+        "name": "Morning roast coffee",
+        "description": "A small-batch medium roast for slow mornings.",
+        "categoryId": "pantry",
+        "priceCents": 1199,
+        "unitKey": "each",
+        "image": "/products/coffee.jpg",
+        "weightCheck": {
+          "required": false,
+          "expectedGrams": 0,
+          "toleranceGrams": 0
+        }
+      },
+      {
+        "id": "floral-bouquet",
+        "barcode": "QS-FLR-077",
+        "name": "Market flower bunch",
+        "description": "A seasonal bunch arranged by the market team.",
+        "categoryId": "floral",
+        "priceCents": 1499,
+        "unitKey": "bunch",
+        "image": "/products/flowers.jpg",
+        "weightCheck": {
+          "required": false,
+          "expectedGrams": 0,
+          "toleranceGrams": 0
+        }
+      }
+    ],
+    "coupons": [
+      {
+        "code": "FRESH10",
+        "description": "10% off eligible market items",
+        "kind": "percent",
+        "value": 1000,
+        "minimumSubtotalCents": 1500,
+        "maximumDiscountCents": 700,
+        "categoryIds": [
+          "produce",
+          "bakery",
+          "dairy",
+          "pantry",
+          "floral"
+        ]
+      },
+      {
+        "code": "MARKET5",
+        "description": "$5 off a $25 basket",
+        "kind": "fixed",
+        "value": 500,
+        "minimumSubtotalCents": 2500,
+        "maximumDiscountCents": 500,
+        "categoryIds": [
+          "produce",
+          "bakery",
+          "dairy",
+          "pantry",
+          "floral"
+        ]
+      }
+    ],
+    "simulator": {
+      "tenderMethods": [
+        "cash",
+        "simulated_card"
+      ],
+      "outcomes": [
+        "approve",
+        "decline"
+      ],
+      "minimumScaleGrams": 1,
+      "maximumScaleGrams": 30000,
+      "noCardData": true
+    }
+  }
+}
