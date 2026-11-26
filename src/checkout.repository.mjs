@@ -343,7 +343,7 @@ export function createCheckoutRepository({ databasePath, model, identity = loadI
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `,
         )
-        .run(randomUUID(), sessionId, productId, quantityDelta, source, key, now);
+        .run(randomUUID(), sessionId, productId, quantityDelta, source, `${sessionId}:${key}`, now);
     },
     recordIntervention: ({ sessionId, productId, action, now, staffCode, reasonCode, sessionVersion }) => {
       database
@@ -364,7 +364,7 @@ export function createCheckoutRepository({ databasePath, model, identity = loadI
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `,
         )
-        .run(randomUUID(), sessionId, method, outcome, amountCents, key, now);
+        .run(randomUUID(), sessionId, method, outcome, amountCents, `${sessionId}:${key}`, now);
     },
     createReceipt: ({ sessionId, receiptNumber, totals, tenderMethod, items, now }) => {
       const receiptId = randomUUID();

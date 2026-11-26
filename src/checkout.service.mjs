@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { transition } from "./checkout.machine.mjs";
 import { CheckoutError } from "./errors.mjs";
+import { fingerprintOf } from "./identity.mjs";
 import { createInterventionService } from "./intervention.service.mjs";
 
 export { CheckoutError };
@@ -81,6 +82,11 @@ export function createCheckoutService({ repository, model, now = () => new Date(
     return now().toISOString();
   }
 
+  // One intent, one stored result: the same key replays; the same key with a different payload is refused.
+  function once(scope, key, payload, work) {
+    return repository.runIdempotently(scope, key, work, fingerprintOf(payload));
+  }
+
   const interventions = createInterventionService({
     repository,
     model,
@@ -109,13 +115,13 @@ export function createCheckoutService({ repository, model, now = () => new Date(
         repository.createSession(sessionId, transition("idle", "START_SESSION"), timestamp(), binding);
         return { sessionId };
       },
-      kioskId,
+      fingerprintOf({ kioskId }),
     );
     return presentSession(repository, model, record.sessionId ?? record.id, now);
   }
 
   function extendSession(sessionId, key) {
-    repository.runIdempotently(`session:${sessionId}:extend`, key, () => {
+    once(`session:${sessionId}:extend`, key, {}, () => {
       requireSession(repository, sessionId, model);
       repository.touchSession(sessionId, timestamp());
       return { sessionId };
@@ -155,14 +161,14 @@ export function createCheckoutService({ repository, model, now = () => new Date(
   }
 
   function scan(sessionId, barcode, source, key) {
-    return repository.runIdempotently(`session:${sessionId}:scan`, key, () => scanOne(sessionId, barcode, source, key));
+    return once(`session:${sessionId}:scan`, key, { barcode, source }, () => scanOne(sessionId, barcode, source, key));
   }
 
   function scanBatch(sessionId, barcodes, key) {
     if (!barcodes.length || barcodes.length > model.data.app.maximumScanBatch) {
       throw new CheckoutError(422, "INVALID_SCAN_BATCH", model.messages.errors.invalidRequest);
     }
-    return repository.runIdempotently(`session:${sessionId}:scan-batch`, key, () => {
+    return once(`session:${sessionId}:scan-batch`, key, { barcodes }, () => {
       let result;
       barcodes.forEach((barcode, index) => {
         result = scanOne(sessionId, barcode, "barcode", `${key}:${index}`);
@@ -175,7 +181,7 @@ export function createCheckoutService({ repository, model, now = () => new Date(
   }
 
   function adjustQuantity(sessionId, productId, delta, key) {
-    return repository.runIdempotently(`session:${sessionId}:quantity`, key, () => {
+    return once(`session:${sessionId}:quantity`, key, { productId, delta }, () => {
       const session = requireSession(repository, sessionId, model);
       requireState(session, ["scanning"], model);
       const item = session.items.find((line) => line.productId === productId);
@@ -212,7 +218,7 @@ export function createCheckoutService({ repository, model, now = () => new Date(
   }
 
   function applyCoupon(sessionId, rawCode, key) {
-    return repository.runIdempotently(`session:${sessionId}:coupon`, key, () => {
+    return once(`session:${sessionId}:coupon`, key, { code: rawCode }, () => {
       const session = requireSession(repository, sessionId, model);
       requireState(session, ["scanning"], model);
       if (!rawCode) {
@@ -234,7 +240,7 @@ export function createCheckoutService({ repository, model, now = () => new Date(
   }
 
   function checkWeight(sessionId, simulatedWeightGrams, key) {
-    return repository.runIdempotently(`session:${sessionId}:weight`, key, () => {
+    return once(`session:${sessionId}:weight`, key, { simulatedWeightGrams }, () => {
       const session = requireSession(repository, sessionId, model);
       requireState(session, ["weight_check_pending"], model);
       const item = session.pendingWeight;
@@ -254,7 +260,7 @@ export function createCheckoutService({ repository, model, now = () => new Date(
   }
 
   function prepareCheckout(sessionId, key) {
-    return repository.runIdempotently(`session:${sessionId}:checkout`, key, () => {
+    return once(`session:${sessionId}:checkout`, key, {}, () => {
       const session = requireSession(repository, sessionId, model);
       requireState(session, ["scanning"], model);
       if (!session.items.length) {
@@ -268,7 +274,7 @@ export function createCheckoutService({ repository, model, now = () => new Date(
   }
 
   function simulateTender(sessionId, method, outcome, key) {
-    return repository.runIdempotently(`session:${sessionId}:tender`, key, () => {
+    return once(`session:${sessionId}:tender`, key, { method, outcome }, () => {
       const session = requireSession(repository, sessionId, model);
       requireState(session, ["ready_to_pay"], model);
       if (!model.data.simulator.tenderMethods.includes(method) || !model.data.simulator.outcomes.includes(outcome)) {
@@ -306,7 +312,7 @@ export function createCheckoutService({ repository, model, now = () => new Date(
   }
 
   function issueReceipt(sessionId, key) {
-    return repository.runIdempotently(`session:${sessionId}:receipt`, key, () => {
+    return once(`session:${sessionId}:receipt`, key, {}, () => {
       const session = requireSession(repository, sessionId, model);
       const existing = repository.getReceipt(sessionId);
       if (existing) return existing;
@@ -343,7 +349,7 @@ export function createCheckoutService({ repository, model, now = () => new Date(
   }
 
   function resetSession(sessionId, key, context = {}) {
-    return repository.runIdempotently(`session:${sessionId}:reset`, key, () => {
+    return once(`session:${sessionId}:reset`, key, {}, () => {
       const session = requireSession(repository, sessionId, model);
       if (session.state === "reset") return { sessionId, state: "reset" };
       const currentTime = timestamp();

@@ -133,6 +133,9 @@ const requiredTextMessages = [
   "staffConflict",
   "attendantCalledTitle",
   "attendantCalledDescription",
+  "awaitingConfirmationTitle",
+  "awaitingConfirmationDescription",
+  "retryConfirmation",
 ];
 const requiredMessageGroups = {
   categories: ["produce", "bakery", "dairy", "pantry", "floral"],

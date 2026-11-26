@@ -1,5 +1,6 @@
 import { transition } from "./checkout.machine.mjs";
 import { CheckoutError } from "./errors.mjs";
+import { fingerprintOf } from "./identity.mjs";
 
 // Attendant decisions on a shopper's exception. rules carries the checkout helpers this module shares
 // with checkout.service.mjs (requireSession, requireState, clearIneligibleCoupon).
@@ -69,8 +70,11 @@ export function createInterventionService({ repository, model, timestamp, rules 
   // Denials are audited after the transaction rolls back, so they survive it.
   function intervene(sessionId, input, key, staff, context = {}) {
     try {
-      return repository.runIdempotently(`session:${sessionId}:intervention`, key, () =>
-        applyIntervention(sessionId, input, staff, context.requestId),
+      return repository.runIdempotently(
+        `session:${sessionId}:intervention`,
+        key,
+        () => applyIntervention(sessionId, input, staff, context.requestId),
+        fingerprintOf({ ...input, staffCode: staff.staffCode }),
       );
     } catch (error) {
       if (error instanceof CheckoutError) {

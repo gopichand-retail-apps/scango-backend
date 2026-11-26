@@ -402,7 +402,17 @@ components:
       in: header
       name: Idempotency-Key
       required: true
+      description: >-
+        One key per user intent. The same key with the same payload replays the stored result (a lost reply plus a
+        retry changes nothing twice). The same key with a different payload returns 409 IDEMPOTENCY_KEY_REUSED.
+        A refused request stores nothing, so the key can carry the corrected request.
       schema: { type: string, minLength: 1, maxLength: 128 }
+    RequestId:
+      in: header
+      name: X-Request-ID
+      required: false
+      description: Per-attempt ID from the client; adopted when it matches ^[a-zA-Z0-9._:-]{1,128}$, otherwise replaced.
+      schema: { type: string, maxLength: 128 }
     KioskId:
       in: header
       name: X-Kiosk-Id
@@ -425,7 +435,9 @@ components:
     KioskNotRegistered:
       description: KIOSK_NOT_REGISTERED; X-Kiosk-Id is missing or not a registered kiosk.
     Conflict:
-      description: Checkout state does not allow the requested transition.
+      description: >-
+        INVALID_STATE when checkout state does not allow the transition, or IDEMPOTENCY_KEY_REUSED when the key was
+        first used with a different payload.
     InvalidInput:
       description: Invalid barcode, coupon, quantity, or scale input.
   schemas:

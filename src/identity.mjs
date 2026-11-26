@@ -67,6 +67,25 @@ export function digestToken(token) {
   return createHash("sha256").update(String(token)).digest("hex");
 }
 
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonical(value[key])]),
+    );
+  }
+  return value;
+}
+
+// SHA-256 of a key-order-independent JSON form; identifies "the same request" for idempotent replay.
+export function fingerprintOf(payload) {
+  return createHash("sha256")
+    .update(JSON.stringify(canonical(payload)))
+    .digest("hex");
+}
+
 export function digestsEqual(left, right) {
   if (typeof left !== "string" || typeof right !== "string" || left.length !== right.length) return false;
   return timingSafeEqual(Buffer.from(left), Buffer.from(right));

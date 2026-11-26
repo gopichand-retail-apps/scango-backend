@@ -112,6 +112,14 @@ function requireIdempotencyKey(request, model) {
   return key;
 }
 
+// Adopt a well-formed client X-Request-ID so one kiosk attempt can be traced end to end.
+function resolveRequestId(request) {
+  const clientRequestId = request.headers["x-request-id"];
+  return typeof clientRequestId === "string" && idempotencyPattern.test(clientRequestId)
+    ? clientRequestId
+    : randomUUID();
+}
+
 function readCredentials(request) {
   const authorization = request.headers.authorization;
   const kioskId = request.headers["x-kiosk-id"];
@@ -172,7 +180,7 @@ async function dispatchRequest(request, url, context, requestId) {
 
 async function handleApiRequest(request, response, context) {
   const startedAt = performance.now();
-  const requestId = randomUUID();
+  const requestId = resolveRequestId(request);
   const { traceId, spanId } = getTraceIds(request);
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   let status = 500;
