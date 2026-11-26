@@ -1,4 +1,4 @@
-export const SCHEMA_REVISION = 2;
+export const SCHEMA_REVISION = 3;
 
 // Additive steps only: old code ignores the extra columns and tables, so rollback is "stop using the new build".
 const steps = [
@@ -32,6 +32,34 @@ const steps = [
           request_id TEXT
         );
         CREATE INDEX audit_log_session_idx ON audit_log(target_session_id, at);
+      `);
+    },
+  },
+  {
+    revision: 3,
+    apply(database) {
+      // The unique index makes "one decision per session version" a storage guarantee, not a race outcome.
+      // Pre-revision rows have a NULL version, which SQLite treats as distinct.
+      database.exec(`
+        ALTER TABLE interventions ADD COLUMN staff_code TEXT;
+        ALTER TABLE interventions ADD COLUMN reason_code TEXT;
+        ALTER TABLE interventions ADD COLUMN session_version INTEGER;
+        CREATE UNIQUE INDEX interventions_session_version_idx
+          ON interventions(session_id, product_id, session_version);
+        CREATE TABLE staff_profiles (
+          code TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          location_id TEXT NOT NULL,
+          pin_hash TEXT NOT NULL
+        );
+        CREATE TABLE staff_sessions (
+          id TEXT PRIMARY KEY,
+          staff_code TEXT NOT NULL REFERENCES staff_profiles(code),
+          location_id TEXT NOT NULL,
+          token_digest TEXT NOT NULL UNIQUE,
+          expires_at TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
       `);
     },
   },

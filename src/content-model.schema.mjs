@@ -110,6 +110,29 @@ const requiredTextMessages = [
   "sessionTimedOut",
   "kioskNotRecognised",
   "idempotencyConflict",
+  "staffConsoleTitle",
+  "staffConsoleDescription",
+  "staffCodeLabel",
+  "staffPinLabel",
+  "staffSignIn",
+  "staffSignOut",
+  "staffSignInFailed",
+  "staffThrottled",
+  "staffSignInRequired",
+  "staffSignedInAs",
+  "staffLocationLabel",
+  "staffExceptionsHeading",
+  "staffNoExceptions",
+  "staffWaitingSince",
+  "staffExpectedWeight",
+  "staffReasonLabel",
+  "staffReasonPlaceholder",
+  "staffApprove",
+  "staffRemove",
+  "staffResolved",
+  "staffConflict",
+  "attendantCalledTitle",
+  "attendantCalledDescription",
 ];
 const requiredMessageGroups = {
   categories: ["produce", "bakery", "dairy", "pantry", "floral"],
@@ -124,7 +147,10 @@ const requiredMessageGroups = {
     "invalidQuantity",
     "invalidScale",
   ],
+  staffReasons: ["weight_verified", "item_mismatch", "scale_fault", "customer_assist"],
 };
+
+export const staffReasonCodes = requiredMessageGroups.staffReasons;
 const allowedMessageKeys = new Set([...requiredTextMessages, ...Object.keys(requiredMessageGroups)]);
 const messagesSchema = z
   .record(z.string(), z.union([z.string().min(1), stringMessages]))

@@ -4,7 +4,16 @@ import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { contentModelSchema } from "./content-model.schema.mjs";
-import { credentialHeaders, getJson, postJson, startApi, startSession } from "../test-support/api-client.mjs";
+import {
+  credentialHeaders,
+  getJson,
+  postJson,
+  signInStaff,
+  staffRequest,
+  startApi,
+  startSession,
+} from "../test-support/api-client.mjs";
+import { loadIdentityFixture } from "./identity.mjs";
 import { addLocalE2EOrigin, loadModel, parseModelText, readAllowedOrigins, resolveServerSettings } from "./server.mjs";
 
 test("health and catalog expose readiness and synthetic products", async (t) => {
@@ -257,11 +266,26 @@ test("weight-check and attendant-intervention routes enforce recovery transition
   const mismatch = await postJson(baseUrl, `/sessions/${sessionId}/weight-check`, "weight-flow-mismatch", {
     simulatedWeightGrams: 1500,
   });
-  assert.equal((await mismatch.json()).data.state, "attention_required");
-  const intervention = await postJson(baseUrl, `/sessions/${sessionId}/intervention`, "weight-flow-remove", {
-    action: "remove_item",
-  });
-  assert.equal((await intervention.json()).data.items.length, 0);
+  const mismatched = (await mismatch.json()).data;
+  assert.equal(mismatched.state, "attention_required");
+  const staff = await signInStaff(baseUrl, "att-01", loadIdentityFixture().staff[0].pin);
+  const intervention = await staffRequest(
+    baseUrl,
+    `/sessions/${sessionId}/intervention`,
+    staff.payload.data.accessToken,
+    {
+      method: "POST",
+      key: "weight-flow-remove",
+      body: {
+        action: "remove_item",
+        reasonCode: "item_mismatch",
+        productId: mismatched.pendingWeight.productId,
+        expectedVersion: mismatched.version,
+      },
+    },
+  );
+  assert.equal(intervention.status, 200);
+  assert.equal((await (await getJson(baseUrl, `/sessions/${sessionId}`)).json()).data.items.length, 0);
 
   const secondScan = await postJson(baseUrl, `/sessions/${sessionId}/scan`, "weight-flow-scan-again", {
     barcode: "QS-BAN-022",

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { transition } from "./checkout.machine.mjs";
 import { CheckoutError } from "./errors.mjs";
+import { createInterventionService } from "./intervention.service.mjs";
 
 export { CheckoutError };
 
@@ -80,6 +81,13 @@ export function createCheckoutService({ repository, model, now = () => new Date(
     return now().toISOString();
   }
 
+  const interventions = createInterventionService({
+    repository,
+    model,
+    timestamp,
+    rules: { requireSession, requireState, clearIneligibleCoupon },
+  });
+
   function catalog() {
     return { categories: model.data.categories, products: repository.listProducts() };
   }
@@ -90,15 +98,14 @@ export function createCheckoutService({ repository, model, now = () => new Date(
     return kiosk;
   }
 
-  // kioskId is null only for direct domain callers (unit tests); the HTTP route always passes one.
-  function startSession(key, kioskId = null) {
-    const kiosk = kioskId === null ? null : requireKiosk(kioskId);
+  function startSession(key, kioskId) {
+    const kiosk = requireKiosk(kioskId);
     const record = repository.runIdempotently(
       "session:start",
       key,
       () => {
         const sessionId = randomUUID();
-        const binding = kiosk && { businessId: kiosk.businessId, locationId: kiosk.locationId, kioskId: kiosk.id };
+        const binding = { businessId: kiosk.businessId, locationId: kiosk.locationId, kioskId: kiosk.id };
         repository.createSession(sessionId, transition("idle", "START_SESSION"), timestamp(), binding);
         return { sessionId };
       },
@@ -246,33 +253,6 @@ export function createCheckoutService({ repository, model, now = () => new Date(
     });
   }
 
-  function intervene(sessionId, action, key) {
-    return repository.runIdempotently(`session:${sessionId}:intervention`, key, () => {
-      const session = requireSession(repository, sessionId, model);
-      requireState(session, ["attention_required"], model);
-      const item = session.pendingWeight;
-      if (!item) {
-        throw new CheckoutError(409, "INTERVENTION_NOT_REQUIRED", model.messages.errors.invalidState);
-      }
-      const currentTime = timestamp();
-      const event = action === "approve_weight" ? "APPROVE_WEIGHT" : "REMOVE_ATTENTION_ITEM";
-      if (action === "approve_weight") {
-        repository.updateItemWeight(sessionId, item.productId, "passed");
-      } else {
-        repository.removeItem(sessionId, item.productId);
-      }
-      repository.recordIntervention({
-        sessionId,
-        productId: item.productId,
-        action,
-        now: currentTime,
-      });
-      repository.updateSession(sessionId, { state: transition(session.state, event) }, currentTime);
-      clearIneligibleCoupon(repository, model, sessionId, currentTime);
-      return presentSession(repository, model, sessionId, now);
-    });
-  }
-
   function prepareCheckout(sessionId, key) {
     return repository.runIdempotently(`session:${sessionId}:checkout`, key, () => {
       const session = requireSession(repository, sessionId, model);
@@ -404,7 +384,7 @@ export function createCheckoutService({ repository, model, now = () => new Date(
     adjustQuantity,
     applyCoupon,
     checkWeight,
-    intervene,
+    intervene: interventions.intervene,
     prepareCheckout,
     simulateTender,
     issueReceipt,

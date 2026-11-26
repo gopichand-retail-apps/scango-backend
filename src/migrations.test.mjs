@@ -23,10 +23,10 @@ test("migrate upgrades a database built from the original schema and is idempote
 
   const revisions = database.prepare("SELECT revision FROM schema_revision").all();
   const legacy = database.prepare("SELECT state, token_digest, version, kiosk_id FROM checkout_sessions").get();
-  assert.equal(SCHEMA_REVISION, 2);
+  assert.equal(SCHEMA_REVISION, 3);
   assert.deepEqual(
     revisions.map((row) => row.revision),
-    [SCHEMA_REVISION],
+    [2, 3],
   );
   assert.deepEqual({ ...legacy }, { state: "scanning", token_digest: null, version: 0, kiosk_id: null });
   assert.deepEqual(
@@ -36,7 +36,13 @@ test("migrate upgrades a database built from the original schema and is idempote
     [],
   );
   assert.equal(columns(database, "idempotency_records").includes("request_fingerprint"), true);
-  for (const table of ["kiosks", "audit_log"]) {
+  assert.deepEqual(
+    ["staff_code", "reason_code", "session_version"].filter(
+      (name) => !columns(database, "interventions").includes(name),
+    ),
+    [],
+  );
+  for (const table of ["kiosks", "audit_log", "staff_profiles", "staff_sessions"]) {
     assert.notEqual(columns(database, table).length, 0, table);
   }
   database.close();

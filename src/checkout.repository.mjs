@@ -249,7 +249,7 @@ export function createCheckoutRepository({ databasePath, model, identity = loadI
     getReceipt,
     runIdempotently,
     access,
-    createSession: (id, state, now, binding = null) => {
+    createSession: (id, state, now, binding) => {
       database
         .prepare(
           `
@@ -258,16 +258,7 @@ export function createCheckoutRepository({ databasePath, model, identity = loadI
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
         )
-        .run(
-          id,
-          state,
-          now,
-          now,
-          binding?.businessId ?? null,
-          binding?.locationId ?? null,
-          binding?.kioskId ?? null,
-          binding ? expiryFrom(now) : null,
-        );
+        .run(id, state, now, now, binding.businessId, binding.locationId, binding.kioskId, expiryFrom(now));
     },
     touchSession: (sessionId, now) => {
       database.prepare(`UPDATE checkout_sessions SET ${slideExpiry} WHERE id = ?`).run(expiryFrom(now), sessionId);
@@ -354,15 +345,16 @@ export function createCheckoutRepository({ databasePath, model, identity = loadI
         )
         .run(randomUUID(), sessionId, productId, quantityDelta, source, key, now);
     },
-    recordIntervention: ({ sessionId, productId, action, now }) => {
+    recordIntervention: ({ sessionId, productId, action, now, staffCode, reasonCode, sessionVersion }) => {
       database
         .prepare(
           `
-        INSERT INTO interventions (id, session_id, product_id, action, occurred_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO interventions
+          (id, session_id, product_id, action, occurred_at, staff_code, reason_code, session_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
         )
-        .run(randomUUID(), sessionId, productId, action, now);
+        .run(randomUUID(), sessionId, productId, action, now, staffCode, reasonCode, sessionVersion);
     },
     recordTender: ({ sessionId, method, outcome, amountCents, key, now }) => {
       database

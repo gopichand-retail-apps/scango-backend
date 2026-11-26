@@ -12,8 +12,21 @@ function createCheckout(t, customizeModel = () => {}) {
   return { model, repository, service: createCheckoutService({ repository, model }) };
 }
 
+const attendant = { staffCode: "att-01", locationId: "store-01" };
+
 function startSession(service) {
-  return service.startSession("start-session-key");
+  return service.startSession("start-session-key", "kiosk-01");
+}
+
+function resolveAsAttendant(service, sessionId, action, key) {
+  const session = service.getSession(sessionId);
+  const input = {
+    action,
+    reasonCode: "weight_verified",
+    productId: session.pendingWeight?.productId ?? "fruit-apples",
+    expectedVersion: session.version,
+  };
+  return service.intervene(sessionId, input, key, attendant);
 }
 
 test("server-owned catalog prices produce exact-cent checkout totals and idempotent scans", (t) => {
@@ -87,9 +100,9 @@ test("scale mismatch requires attendant intervention before checkout", (t) => {
     (error) => error instanceof CheckoutError && error.code === "INVALID_STATE",
   );
 
-  const resolved = service.intervene(session.id, "approve_weight", "approve-weight-key");
+  const resolved = resolveAsAttendant(service, session.id, "approve_weight", "approve-weight-key");
   assert.equal(resolved.state, "scanning");
-  assert.equal(resolved.pendingWeight, null);
+  assert.equal(service.getSession(session.id).pendingWeight, null);
 });
 
 test("a declined tender can be retried and approved without card data", (t) => {
@@ -233,13 +246,13 @@ test("scale success and attendant removal produce the expected server states", (
 
   service.scan(session.id, "QS-BAN-022", "barcode", "banana-scan");
   service.checkWeight(session.id, 2000, "banana-weight-fail");
-  const removed = service.intervene(session.id, "remove_item", "remove-banana");
+  const removed = resolveAsAttendant(service, session.id, "remove_item", "remove-banana");
   assert.equal(removed.state, "scanning");
   assert.deepEqual(
-    removed.items.map((item) => item.productId),
+    service.getSession(session.id).items.map((item) => item.productId),
     ["fruit-apples"],
   );
-  assert.equal(removed.pendingWeight, null);
+  assert.equal(service.getSession(session.id).pendingWeight, null);
 });
 
 test("scan batches roll back when a weighted item is not last", (t) => {
@@ -269,7 +282,7 @@ test("weight and intervention actions reject inconsistent checkout state", (t) =
 
   repository.updateSession(session.id, { state: "attention_required" }, new Date().toISOString());
   assert.throws(
-    () => service.intervene(session.id, "approve_weight", "missing-attention-item"),
+    () => resolveAsAttendant(service, session.id, "approve_weight", "missing-attention-item"),
     (error) => error instanceof CheckoutError && error.code === "INTERVENTION_NOT_REQUIRED",
   );
 });

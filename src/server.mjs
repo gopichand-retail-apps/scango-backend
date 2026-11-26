@@ -157,6 +157,7 @@ async function dispatchRequest(request, url, context, requestId) {
   if (resolved.access === "session") {
     context.access.authorizeSession({ sessionId: resolved.sessionId, bearer, kioskId, requestId });
   }
+  const staff = resolved.access === "staff" ? context.access.authorizeStaff(bearer) : undefined;
   const body =
     request.method === "POST"
       ? parseBody(resolved.route.schema, await readJsonBody(request, model.data.app.maximumBodyBytes), model)
@@ -165,7 +166,7 @@ async function dispatchRequest(request, url, context, requestId) {
   return {
     status: resolved.route.status,
     routeTemplate: resolved.route.template,
-    data: resolved.route.execute({ sessionId: resolved.sessionId, body, key, kioskId, requestId }),
+    data: resolved.route.execute({ sessionId: resolved.sessionId, body, key, kioskId, requestId, staff }),
   };
 }
 
@@ -197,7 +198,7 @@ async function handleApiRequest(request, response, context) {
         ? error.message
         : context.model.messages.errors.server;
     sendJson(response, status, {
-      error: { code: errorCode, message, requestId },
+      error: { code: errorCode, message, requestId, ...(error instanceof CheckoutError ? error.details : {}) },
     });
   } finally {
     writeLog({

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { APP_VERSION } from "./app-version.mjs";
+import { staffReasonCodes } from "./content-model.schema.mjs";
 
 export function createRouteRegistry(service, model, access) {
   const emptySchema = z.object({}).strict();
@@ -41,6 +42,15 @@ export function createRouteRegistry(service, model, access) {
   const interventionSchema = z
     .object({
       action: z.enum(["approve_weight", "remove_item"]),
+      reasonCode: z.enum(staffReasonCodes),
+      productId: z.string().trim().min(1).max(64),
+      expectedVersion: z.number().int().nonnegative(),
+    })
+    .strict();
+  const staffSignInSchema = z
+    .object({
+      code: z.string().regex(/^[a-z0-9-]{1,40}$/),
+      pin: z.string().regex(/^\d{4,8}$/),
     })
     .strict();
   const tenderSchema = z
@@ -87,6 +97,34 @@ export function createRouteRegistry(service, model, access) {
           const session = service.startSession(key, kioskId ?? "");
           return { ...session, accessToken: access.issueSessionToken(session.id) };
         },
+      },
+    ],
+    [
+      "POST /api/v1/staff/sessions",
+      {
+        template: "/api/v1/staff/sessions",
+        status: 201,
+        schema: staffSignInSchema,
+        execute: ({ body, requestId }) => access.signInStaff({ ...body, requestId }),
+      },
+    ],
+    [
+      "POST /api/v1/staff/sign-out",
+      {
+        template: "/api/v1/staff/sign-out",
+        status: 200,
+        access: "staff",
+        schema: emptySchema,
+        execute: ({ staff, requestId }) => access.signOutStaff(staff, requestId),
+      },
+    ],
+    [
+      "GET /api/v1/staff/exceptions",
+      {
+        template: "/api/v1/staff/exceptions",
+        status: 200,
+        access: "staff",
+        execute: ({ staff }) => ({ exceptions: access.listExceptions(staff) }),
       },
     ],
   ]);
@@ -163,9 +201,11 @@ export function createRouteRegistry(service, model, access) {
       {
         template: "/api/v1/sessions/:sessionId/intervention",
         status: 200,
+        access: "staff",
         schema: interventionSchema,
         requiresIdempotency: true,
-        execute: ({ sessionId, body, key }) => service.intervene(sessionId, body.action, key),
+        execute: ({ sessionId, body, key, staff, requestId }) =>
+          service.intervene(sessionId, body, key, staff, { requestId }),
       },
     ],
     [
@@ -224,7 +264,7 @@ export function createRouteRegistry(service, model, access) {
 
 export function resolveRoute(method, pathname, routes) {
   const exact = routes.exact.get(`${method} ${pathname}`);
-  if (exact) return { route: exact, sessionId: null, access: "public" };
+  if (exact) return { route: exact, sessionId: null, access: exact.access ?? "public" };
   const actionPattern =
     "scan-batch|scan|quantity|coupon|weight-check|intervention|checkout|tenders|receipt|reset|extend";
   const sessionPattern = new RegExp(`^/api/v1/sessions/([0-9a-f-]{36})(?:/(${actionPattern}))?$`);
