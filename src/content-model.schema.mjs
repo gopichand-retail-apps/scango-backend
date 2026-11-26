@@ -97,10 +97,19 @@ const requiredTextMessages = [
   "stateReceiptIssued",
   "stateReset",
   "stateCancelled",
+  "stateExpired",
   "roleShopper",
   "roleAttendant",
   "roleAdministrator",
   "issueReceipt",
+  "sessionIdleTitle",
+  "sessionIdleDescription",
+  "sessionExtend",
+  "sessionEndNow",
+  "sessionSecondsLeft",
+  "sessionTimedOut",
+  "kioskNotRecognised",
+  "idempotencyConflict",
 ];
 const requiredMessageGroups = {
   categories: ["produce", "bakery", "dairy", "pantry", "floral"],
@@ -164,10 +173,15 @@ const appContentSchema = z
     taxRateBasisPoints: z.number().int().nonnegative().max(10000),
     scaleMinimumGrams: z.number().int().positive(),
     scaleMaximumGrams: z.number().int().positive(),
+    sessionIdleSeconds: z.number().int().positive(),
+    sessionWarningSeconds: z.number().int().positive(),
   })
   .strict()
   .refine((app) => app.scaleMinimumGrams <= app.scaleMaximumGrams, {
     message: "The scale minimum must not exceed the scale maximum.",
+  })
+  .refine((app) => app.sessionWarningSeconds < app.sessionIdleSeconds, {
+    message: "The idle warning must start before the session expires.",
   });
 
 const categorySchema = z

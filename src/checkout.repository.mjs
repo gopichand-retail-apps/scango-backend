@@ -2,27 +2,30 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { createAccessRepository } from "./access.repository.mjs";
 import { checkoutSchema } from "./checkout.schema.mjs";
+import { CheckoutError } from "./errors.mjs";
+import { loadIdentityFixture } from "./identity.mjs";
+import { migrate } from "./migrations.mjs";
+import { transaction } from "./sqlite-transaction.mjs";
 
-function transaction(database, work) {
-  database.exec("BEGIN IMMEDIATE");
-  try {
-    const result = work();
-    database.exec("COMMIT");
-    return result;
-  } catch (error) {
-    database.exec("ROLLBACK");
-    throw error;
-  }
-}
+// Sessions created before revision 2 have no expiry; CASE keeps them that way.
+const slideExpiry = "expires_at = CASE WHEN expires_at IS NULL THEN NULL ELSE ? END";
 
-export function createCheckoutRepository({ databasePath, model }) {
+export function createCheckoutRepository({ databasePath, model, identity = loadIdentityFixture() }) {
   if (databasePath !== ":memory:") {
     mkdirSync(dirname(resolve(databasePath)), { recursive: true });
   }
   const database = new DatabaseSync(databasePath);
   database.exec(checkoutSchema);
+  migrate(database);
+  const access = createAccessRepository(database);
   seedCatalog();
+  access.seedIdentity(identity);
+
+  function expiryFrom(now) {
+    return new Date(Date.parse(now) + model.data.app.sessionIdleSeconds * 1000).toISOString();
+  }
 
   function seedCatalog() {
     transaction(database, () => {
@@ -105,12 +108,26 @@ export function createCheckoutRepository({ databasePath, model }) {
         .prepare(
           `
       SELECT id, state, coupon_code AS couponCode, payment_status AS paymentStatus,
-        created_at AS createdAt, updated_at AS updatedAt, reset_at AS resetAt
+        created_at AS createdAt, updated_at AS updatedAt, reset_at AS resetAt,
+        version, expires_at AS expiresAt
       FROM checkout_sessions WHERE id = ?
     `,
         )
         .get(sessionId) ?? null
     );
+  }
+
+  function getSessionAccess(sessionId) {
+    const row = database
+      .prepare(
+        `
+      SELECT id, state, business_id AS businessId, location_id AS locationId, kiosk_id AS kioskId,
+        token_digest AS tokenDigest, expires_at AS expiresAt, version
+      FROM checkout_sessions WHERE id = ?
+    `,
+      )
+      .get(sessionId);
+    return row ? { ...row } : null;
   }
 
   function getSessionItems(sessionId) {
@@ -175,26 +192,33 @@ export function createCheckoutRepository({ databasePath, model }) {
     return { ...receipt, items: JSON.parse(itemsJson) };
   }
 
-  function runIdempotently(scope, key, work) {
+  // A reused key replays its stored result; a reused key with a different fingerprint is refused.
+  // Rows stored before fingerprints existed (NULL) keep replaying.
+  function runIdempotently(scope, key, work, fingerprint = null) {
     return transaction(database, () => {
       const previous = database
         .prepare(
           `
-        SELECT response_json AS responseJson FROM idempotency_records
+        SELECT response_json AS responseJson, request_fingerprint AS fingerprint FROM idempotency_records
         WHERE scope = ? AND idempotency_key = ?
       `,
         )
         .get(scope, key);
-      if (previous) return JSON.parse(previous.responseJson);
+      if (previous) {
+        if (previous.fingerprint !== null && fingerprint !== null && previous.fingerprint !== fingerprint) {
+          throw new CheckoutError(409, "IDEMPOTENCY_KEY_REUSED", model.messages.idempotencyConflict);
+        }
+        return JSON.parse(previous.responseJson);
+      }
       const response = work();
       database
         .prepare(
           `
-        INSERT INTO idempotency_records (scope, idempotency_key, response_json, created_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO idempotency_records (scope, idempotency_key, response_json, created_at, request_fingerprint)
+        VALUES (?, ?, ?, ?, ?)
       `,
         )
-        .run(scope, key, JSON.stringify(response), new Date().toISOString());
+        .run(scope, key, JSON.stringify(response), new Date().toISOString(), fingerprint);
       return response;
     });
   }
@@ -221,17 +245,32 @@ export function createCheckoutRepository({ databasePath, model }) {
     getProduct,
     getCoupon,
     getSession,
+    getSessionAccess,
     getReceipt,
     runIdempotently,
-    createSession: (id, state, now) => {
+    access,
+    createSession: (id, state, now, binding = null) => {
       database
         .prepare(
           `
-        INSERT INTO checkout_sessions (id, state, created_at, updated_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO checkout_sessions
+          (id, state, created_at, updated_at, business_id, location_id, kiosk_id, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
         )
-        .run(id, state, now, now);
+        .run(
+          id,
+          state,
+          now,
+          now,
+          binding?.businessId ?? null,
+          binding?.locationId ?? null,
+          binding?.kioskId ?? null,
+          binding ? expiryFrom(now) : null,
+        );
+    },
+    touchSession: (sessionId, now) => {
+      database.prepare(`UPDATE checkout_sessions SET ${slideExpiry} WHERE id = ?`).run(expiryFrom(now), sessionId);
     },
     updateSession: (sessionId, updates, now) => {
       const fields = [];
@@ -252,8 +291,12 @@ export function createCheckoutRepository({ databasePath, model }) {
         fields.push("reset_at = ?");
         values.push(updates.resetAt);
       }
-      fields.push("updated_at = ?");
-      values.push(now, sessionId);
+      if (Object.hasOwn(updates, "tokenDigest")) {
+        fields.push("token_digest = ?");
+        values.push(updates.tokenDigest);
+      }
+      fields.push("version = version + 1", slideExpiry, "updated_at = ?");
+      values.push(expiryFrom(now), now, sessionId);
       database.prepare(`UPDATE checkout_sessions SET ${fields.join(", ")} WHERE id = ?`).run(...values);
     },
     upsertItem: (sessionId, product, quantity, weightStatus, now) => {
@@ -296,8 +339,10 @@ export function createCheckoutRepository({ databasePath, model }) {
     },
     setCoupon: (sessionId, couponCode, now) => {
       database
-        .prepare(`UPDATE checkout_sessions SET coupon_code = ?, updated_at = ? WHERE id = ?`)
-        .run(couponCode, now, sessionId);
+        .prepare(
+          `UPDATE checkout_sessions SET coupon_code = ?, version = version + 1, ${slideExpiry}, updated_at = ? WHERE id = ?`,
+        )
+        .run(couponCode, expiryFrom(now), now, sessionId);
     },
     recordScan: ({ sessionId, productId, quantityDelta, source, key, now }) => {
       database

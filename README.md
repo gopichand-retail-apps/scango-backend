@@ -14,7 +14,7 @@ Health: http://127.0.0.1:5112/api/v1/health. Direct startup stores data under `d
 
 The API reads its seed/content contract from the adjacent frontend at `../scango-frontend/public/scango-model.json`. Clone both repositories as siblings before starting it; this existing file dependency is not a network integration. Backend configuration is read from process environment variables; creating a .env file alone does not load it.
 
-Known release gaps: Shopper session ownership and staff authorization are absent. Two Windows backend tests and critical server coverage fail in the baseline; receipt-only print CSS is absent. Separate IT fixes do not change this baseline.
+Known release gaps: Shopper sessions are bound to a registered kiosk by an in-memory bearer token (SCN-01); staff authorization is absent until SCN-02. Two Windows backend tests and critical server coverage fail in the baseline. Separate IT fixes do not change this baseline.
 
 The Node.js API owns the checkout state machine, catalog/coupon validation, price and tax calculation, and local SQLite persistence. It is the only database client in the application.
 
@@ -40,8 +40,9 @@ settings.
 The versioned base URL is `http://127.0.0.1:5112/api/v1`; see [`openapi.yaml`](openapi.yaml).
 
 - `GET /health`, `/catalog`
-- `POST /sessions` and `GET /sessions/{sessionId}`
-- Session actions: `POST /scan`, `/scan-batch`, `/quantity`, `/coupon`, `/weight-check`, `/intervention`, `/checkout`, `/tenders`, `/receipt`, and `/reset`
+- `POST /sessions` (requires `X-Kiosk-Id` of a registered kiosk; returns `accessToken` once) and `GET /sessions/{sessionId}`
+- Session actions: `POST /scan`, `/scan-batch`, `/quantity`, `/coupon`, `/weight-check`, `/intervention`, `/checkout`, `/tenders`, `/receipt`, `/reset`, and `/extend`
+- Every `/sessions/{sessionId}` route requires `Authorization: Bearer <accessToken>` and the same `X-Kiosk-Id`. A missing, wrong or other-kiosk token gets the same `404 SESSION_NOT_FOUND` as an unknown ID; an idle session returns `410 SESSION_EXPIRED`.
 - `GET /sessions/{sessionId}/receipt`
 
 State-changing requests require an `Idempotency-Key`. The repository stores replay responses and commits a state change, its scan/intervention/tender/receipt record, and its idempotency record transactionally. Product prices and totals are read from the API-owned catalog; client totals are never accepted. CSV, PAN, CVV, bank credentials, and real payment tokens are not accepted.
@@ -59,10 +60,10 @@ npm audit
 ```
 
 `npm run test:coverage` enforces 90% statements, branches, functions, and lines,
-plus 95% for the checkout state machine, service, repository, routes, and model
-validator. Tests use in-memory SQLite and ephemeral ports. Playwright starts a
+plus 95% for the checkout state machine, service, repository, routes, model
+validator, server, and the access, identity and migration modules. Tests use in-memory SQLite and ephemeral ports. Playwright starts a
 separate in-memory API instance, leaving the default database untouched.
 
 ## Security boundary
 
-The service is loopback-only and checks configured browser origins when an `Origin` header is supplied. No shopper, attendant, or administrator authentication/authorization exists. The attendant intervention is explicitly simulated. Before any external or multi-user deployment, add verified identity, server-derived owner scope, role policies, TLS, managed data controls, and security review. See [security notes](docs/architecture.md#8-security-privacy-and-egress).
+The service is loopback-only and checks configured browser origins when an `Origin` header is supplied. Shopper sessions are owned by the kiosk that started them: the API stores only a SHA-256 digest of a random 256-bit token, slides a 180-second idle expiry (from the content model) on each write, and clears the digest on reset. Kiosk IDs come from the synthetic fixture `fixtures/synthetic-identity.json`; there is no hardware attestation, so a declared kiosk ID plus the token is the binding. Attendant and administrator authorization are not implemented yet. Before any external or multi-user deployment, add verified identity, server-derived owner scope, role policies, TLS, managed data controls, and security review. See [security notes](docs/architecture.md#8-security-privacy-and-egress).

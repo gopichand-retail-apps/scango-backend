@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 const coverageSummaryPath = fileURLToPath(new URL("../coverage/coverage-summary.json", import.meta.url));
 const coverageSummary = JSON.parse(readFileSync(coverageSummaryPath, "utf8"));
 const criticalFiles = [
+  "src/access.repository.mjs",
+  "src/access.service.mjs",
+  "src/identity.mjs",
+  "src/migrations.mjs",
   "src/checkout.machine.mjs",
   "src/checkout.repository.mjs",
   "src/checkout.service.mjs",

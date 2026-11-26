@@ -108,3 +108,24 @@ test("the backend rejects invalid limits, catalog fixtures, coupons, and simulat
     assert.equal(contentModelSchema.safeParse(candidate).success, false);
   }
 });
+
+test("the model carries idle-session timing and rejects a warning longer than the idle window", () => {
+  const { sessionIdleSeconds, sessionWarningSeconds } = validModel.data.app;
+  const inverted = {
+    ...validModel,
+    data: { ...validModel.data, app: { ...validModel.data.app, sessionWarningSeconds: sessionIdleSeconds } },
+  };
+
+  assert.equal(sessionIdleSeconds, 180);
+  assert.equal(sessionWarningSeconds, 30);
+  assert.equal(contentModelSchema.safeParse(inverted).success, false);
+  for (const key of [
+    "sessionIdleTitle",
+    "sessionExtend",
+    "sessionTimedOut",
+    "kioskNotRecognised",
+    "idempotencyConflict",
+  ]) {
+    assert.equal(typeof validModel.messages[key], "string", key);
+  }
+});

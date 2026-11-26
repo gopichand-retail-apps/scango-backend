@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { APP_VERSION } from "./app-version.mjs";
 
-export function createRouteRegistry(service, model) {
+export function createRouteRegistry(service, model, access) {
   const emptySchema = z.object({}).strict();
   const scanSchema = z
     .object({
@@ -82,7 +82,11 @@ export function createRouteRegistry(service, model) {
         status: 201,
         schema: emptySchema,
         requiresIdempotency: true,
-        execute: ({ key }) => service.startSession(key),
+        execute: ({ key, kioskId, requestId }) => {
+          access.expireOverdue(requestId);
+          const session = service.startSession(key, kioskId ?? "");
+          return { ...session, accessToken: access.issueSessionToken(session.id) };
+        },
       },
     ],
   ]);
@@ -201,7 +205,17 @@ export function createRouteRegistry(service, model) {
         status: 200,
         schema: emptySchema,
         requiresIdempotency: true,
-        execute: ({ sessionId, key }) => service.resetSession(sessionId, key),
+        execute: ({ sessionId, key, requestId }) => service.resetSession(sessionId, key, { requestId }),
+      },
+    ],
+    [
+      "POST extend",
+      {
+        template: "/api/v1/sessions/:sessionId/extend",
+        status: 200,
+        schema: emptySchema,
+        requiresIdempotency: true,
+        execute: ({ sessionId, key }) => service.extendSession(sessionId, key),
       },
     ],
   ]);
@@ -210,12 +224,13 @@ export function createRouteRegistry(service, model) {
 
 export function resolveRoute(method, pathname, routes) {
   const exact = routes.exact.get(`${method} ${pathname}`);
-  if (exact) return { route: exact, sessionId: null };
-  const actionPattern = "scan-batch|scan|quantity|coupon|weight-check|intervention|checkout|tenders|receipt|reset";
+  if (exact) return { route: exact, sessionId: null, access: "public" };
+  const actionPattern =
+    "scan-batch|scan|quantity|coupon|weight-check|intervention|checkout|tenders|receipt|reset|extend";
   const sessionPattern = new RegExp(`^/api/v1/sessions/([0-9a-f-]{36})(?:/(${actionPattern}))?$`);
   const match = sessionPattern.exec(pathname);
   if (!match) return null;
   const action = match[2] ?? "";
   const route = routes.sessionRoutes.get(`${method} ${action}`);
-  return route ? { route, sessionId: match[1] } : null;
+  return route ? { route, sessionId: match[1], access: route.access ?? "session" } : null;
 }

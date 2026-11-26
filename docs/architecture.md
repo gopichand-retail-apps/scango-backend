@@ -45,7 +45,7 @@ The API is the data authority, but only the identity/ownership controls actually
 
 ### C4 system context
 
-The shopper is an unauthenticated local user. Attendant actions are simulated controls, not staff identity.
+The shopper is an anonymous local user whose session is bound to the kiosk that started it by a bearer token held only in browser memory. Attendant actions are simulated controls, not staff identity.
 
 ```mermaid
 flowchart LR
@@ -90,8 +90,12 @@ The frontend fetches `public/scango-model.json` with `cache: "no-store"`. Both r
 | [src/checkout.machine.mjs](../src/checkout.machine.mjs)<br>[src/checkout.service.mjs](../src/checkout.service.mjs)                     | Application workflow/state-machine owners              |
 | [src/checkout.repository.mjs](../src/checkout.repository.mjs)                                                                          | Storage/transaction owners; memory where implemented   |
 | [src/checkout.schema.mjs](../src/checkout.schema.mjs)<br>[src/content-model.schema.mjs](../src/content-model.schema.mjs)               | Validation/schema and migration authority              |
+| [src/access.service.mjs](../src/access.service.mjs)<br>[src/access.repository.mjs](../src/access.repository.mjs)                     | Session ownership, idle expiry, token issue and audit  |
+| [src/identity.mjs](../src/identity.mjs)<br>[fixtures/synthetic-identity.json](../fixtures/synthetic-identity.json)                   | Token/PIN hashing and the synthetic kiosk/staff fixture |
+| [src/migrations.mjs](../src/migrations.mjs)                                                                                            | Additive, revision-tracked schema migrations           |
 | [openapi.yaml](../openapi.yaml)                                                                                                        | Published request/response contract source             |
 | [src/checkout.machine.test.mjs](../src/checkout.machine.test.mjs)<br>[src/checkout.service.test.mjs](../src/checkout.service.test.mjs) | Examples of existing colocated tests                   |
+| [src/session-access.test.mjs](../src/session-access.test.mjs)<br>[test-support/api-client.mjs](../test-support/api-client.mjs)       | Kiosk ownership/expiry HTTP tests and shared test helpers |
 
 The source map follows the existing framework directories and test placement.
 
@@ -114,14 +118,16 @@ sequenceDiagram
   participant API as Checkout API
   participant DB as SQLite
   Shopper->>UI: Start checkout
-  UI->>API: POST /sessions + Idempotency-Key
+  UI->>API: POST /sessions + Idempotency-Key + X-Kiosk-Id
+  API->>DB: Expire overdue sessions; look up the registered kiosk
   API->>API: Transition idle to scanning
-  API->>DB: Insert session and replay record atomically
-  API-->>UI: Session snapshot
+  API->>DB: Insert kiosk-bound session and replay record atomically
+  API->>DB: Store SHA-256 digest of a new access token
+  API-->>UI: Session snapshot + accessToken (once)
   UI-->>Shopper: Scanner and basket are ready
 ```
 
-**Precondition:** UI and API are available. **Success:** a persisted scanning session appears. **Failure/recovery:** a safe alert offers retry; the key prevents duplicate session creation on replay. **Authorization/logs:** no authenticated shopper exists; route, request ID, status, and duration are logged without session contents.
+**Precondition:** UI and API are available and the kiosk ID is registered. **Success:** a persisted scanning session appears, owned by that kiosk, with a 180-second sliding idle expiry. **Failure/recovery:** an unknown kiosk gets `403 KIOSK_NOT_REGISTERED`; a retry with the same key and kiosk returns the same session and rotates the token (the lost reply's token stops working); the same key from another kiosk gets `409 IDEMPOTENCY_KEY_REUSED`. **Authorization/logs:** the token is never logged, stored in plain text or written to the replay record; route, request ID, status, and duration are logged without session contents.
 
 #### 2. Search or scan a product
 
@@ -270,7 +276,7 @@ sequenceDiagram
   UI-->>Shopper: Return to welcome screen
 ```
 
-**Precondition:** a persisted session exists. **Success:** the prior session, scans, tender, intervention, and receipt remain recorded while the UI returns to idle. **Failure/recovery:** retrying the same key is safe; a new session receives a new ID. Logs remain metadata-only.
+**Precondition:** a persisted session owned by this kiosk exists. **Success:** the prior session, scans, tender, intervention, and receipt remain recorded, the token digest is cleared so nobody can reopen the receipt, and a `session.reset` audit row is written. **Failure/recovery:** a retry after a lost reply gets `404 SESSION_NOT_FOUND`, which the kiosk treats as already reset; a new session receives a new ID. Logs remain metadata-only.
 
 ## 6. Domain, persistence, and data ownership
 
@@ -288,6 +294,8 @@ erDiagram
   PRODUCTS ||--o{ INTERVENTIONS : concerns
   CHECKOUT_SESSIONS ||--o{ TENDERS : simulates
   CHECKOUT_SESSIONS ||--o| RECEIPTS : produces
+  KIOSKS ||--o{ CHECKOUT_SESSIONS : owns
+  CHECKOUT_SESSIONS ||--o{ AUDIT_LOG : audited_by
   PRODUCTS {
     text id PK
     text barcode UK
@@ -352,7 +360,7 @@ erDiagram
   }
 ```
 
-The repository owns schema creation, parameterized statements, seed insertion, explicit transactions, and idempotency replay. Session items snapshot server-owned unit prices. The API stores only synthetic product/checkout data and receipt metadata. SQLite lives at `scango-backend/data/scango.sqlite` by default; `SCANGO_DB_PATH=:memory:` is used in tests.
+The repository owns schema creation, parameterized statements, seed insertion, explicit transactions, and idempotency replay. [src/migrations.mjs](../src/migrations.mjs) applies additive, revision-tracked steps after the base schema (`schema_revision`). Revision 2 adds `business_id`, `location_id`, `kiosk_id`, `token_digest`, `expires_at`, `version` and `closed_reason` to `checkout_sessions`, `request_fingerprint` to `idempotency_records`, and the `kiosks` and `audit_log` tables. A failed step rolls back and records nothing. Sessions created before revision 2 have no token digest and cannot be resumed. Rollback is "stop using the new build": older code ignores the extra columns. Session items snapshot server-owned unit prices. The API stores only synthetic product/checkout data and receipt metadata. SQLite lives at `scango-backend/data/scango.sqlite` by default; `SCANGO_DB_PATH=:memory:` is used in tests.
 
 ## 7. API and internal contracts
 
@@ -379,7 +387,12 @@ stateDiagram-v2
   ready_to_pay --> reset: reset
   paid --> reset: reset
   receipt_issued --> reset: reset
+  scanning --> expired: idle timeout
+  attention_required --> expired: idle timeout
+  receipt_issued --> expired: idle timeout
 ```
+
+Every open state can move to `expired` (the diagram shows three for brevity). `expired` and `reset` are terminal.
 
 The [OpenAPI document](../openapi.yaml) specifies version `v1`. It exposes health/version/catalog reads, session reads, and idempotent state-changing session actions. Success uses `{ "data": ... }`; errors use `{ "error": { "code", "message", "requestId" } }`. Request size, barcode length, scan-batch count, quantity, scale range, coupon code, and tender enum are server-validated. Coupons, subtotal, discount, tax, and total use integer cents and the API's model/database values.
 
@@ -388,22 +401,23 @@ The [OpenAPI document](../openapi.yaml) specifies version `v1`. It exposes healt
 | Route group                                                                          | Current caller                | Authentication | Ownership / role check                                               |
 | ------------------------------------------------------------------------------------ | ----------------------------- | -------------- | -------------------------------------------------------------------- |
 | `GET /health`, `/version`, `/catalog`                                                | Any local caller              | None           | Not applicable; catalog is synthetic                                 |
-| `POST /sessions`                                                                     | Any local caller              | None           | Creates an unowned synthetic session; idempotency key required       |
-| `GET /sessions/{sessionId}` and `GET /receipt`                                       | Any caller who knows the UUID | None           | No session owner check                                               |
-| Session scan, quantity, coupon, weight, checkout, tender, receipt, and reset actions | Any caller who knows the UUID | None           | No shopper ownership check; all mutations require an idempotency key |
+| `POST /sessions`                                                                     | A registered kiosk            | `X-Kiosk-Id`   | Creates a session bound to that kiosk; returns the bearer token once |
+| `GET /sessions/{sessionId}` and `GET /receipt`                                       | The owning kiosk              | Bearer token   | Token digest and kiosk must match; otherwise the same 404 as unknown |
+| Session scan, quantity, coupon, weight, checkout, tender, receipt, reset and extend  | The owning kiosk              | Bearer token   | Checked before body parsing or idempotent replay; 410 once idle      |
 | `POST /intervention`                                                                 | Any caller who knows the UUID | None           | Attendant role is not authenticated or authorized                    |
 
 The API binds to loopback by default. UUIDs and CORS are not authorization. A
-local caller can read or mutate any synthetic session; there is no idle timeout.
-These are deployment blockers, not implied protections.
+session can only be read or changed with its kiosk's token; sessions expire after
+180 idle seconds (writes and `POST /extend` slide the expiry; reads do not). The
+attendant route still has no staff identity, which remains a deployment blocker.
 
 The tender outcome is deliberately a local user-selectable simulator result. It cannot authorize or move money. A declined attempt is recorded and leaves the session payable; the same idempotency key replays the original response. Receipt issuance requires an approved simulated tender.
 
 ## 8. Security, privacy, and egress
 
-Current release limitation: **Shopper session ownership and staff authorization are absent. Two Windows backend tests and critical server coverage fail in the baseline; receipt-only print CSS is absent. Separate IT fixes do not change this baseline.**
+Current release limitation: **Shopper sessions are bound to a registered kiosk by an in-memory bearer token (SCN-01); staff authorization is absent until SCN-02. Two Windows backend tests and critical server coverage fail in the baseline. Separate IT fixes do not change this baseline.**
 
-Only the local simulator controls in the current source are implemented. CORS, a role label, and mode selection do not provide a new production identity boundary.
+Only the local simulator controls in the current source are implemented. CORS, a role label, and mode selection do not provide a new production identity boundary. Shopper tokens are random 256-bit values; the API keeps only their SHA-256 digest, compares in constant time and never logs them. Kiosk IDs and synthetic attendant PINs live in the backend-only `fixtures/synthetic-identity.json`, which is never served to browsers. There is no hardware attestation: device binding is a declared kiosk ID plus the token, which is adequate for a loopback demo and not for production.
 
 Keep private credentials out of public models, browser bundles, logs, URLs, and source archives. No additional runtime network destination or external service is configured. Keep logs limited to the source-defined request/trace and safe aggregate fields. Backups, retention, deletion, and real-user ownership need explicit product/operations decisions before external exposure.
 
@@ -421,9 +435,9 @@ Configured npm scripts, from this repository with Node **24.15.0**; use `npm.cmd
 | `npm.cmd run start`         | `node src/server.mjs`                                                                                                                                                                                                                                                                                                               |
 | `npm.cmd run test`          | `node --test`                                                                                                                                                                                                                                                                                                                       |
 | `npm.cmd run test:coverage` | `c8 --all --include='src/**/*.mjs' --exclude='src/**/*.test.mjs' --check-coverage --lines 90 --statements 90 --functions 90 --branches 90 --reporter=text --reporter=lcov --reporter=json-summary --report-dir=coverage node --test && node scripts/check-critical-coverage.mjs`                                                    |
-| `npm.cmd run check`         | `node --check src/server.mjs && node --check src/routes.mjs && node --check src/content-model.schema.mjs && node --check src/checkout.machine.mjs && node --check src/checkout.schema.mjs && node --check src/checkout.repository.mjs && node --check src/checkout.service.mjs && node --check scripts/check-critical-coverage.mjs` |
+| `npm.cmd run check`         | `node --check src/server.mjs && node --check src/routes.mjs && node --check src/content-model.schema.mjs && node --check src/checkout.machine.mjs && node --check src/checkout.schema.mjs && node --check src/checkout.repository.mjs && node --check src/checkout.service.mjs && node --check scripts/check-critical-coverage.mjs && node --check src/access.repository.mjs && node --check src/access.service.mjs && node --check src/identity.mjs && node --check src/migrations.mjs && node --check src/errors.mjs && node --check src/sqlite-transaction.mjs` |
 | `npm.cmd run lint`          | `eslint . --max-warnings=0`                                                                                                                                                                                                                                                                                                         |
-| `npm.cmd run format:check`  | `prettier --check "src/**/*.mjs" "scripts/**/*.mjs" "*.mjs" "*.yaml"`                                                                                                                                                                                                                                                               |
+| `npm.cmd run format:check`  | `prettier --check "src/**/*.mjs" "scripts/**/*.mjs" "test-support/**/*.mjs" "*.mjs" "*.yaml"` |
 
 Install with `npm.cmd ci` and retain [package-lock.json](../package-lock.json). Registry access is required for a clean dependency installation. These commands describe the configured checks; execution results are listed in section 13.
 
@@ -442,7 +456,7 @@ The two Git repositories remain separate. Each owns one maintained README and th
 | Capability                       | Acceptance                                                        | Owner/path                         | Current status                                                | Evidence                               | Risk                                                                                                                                                                                                                        |
 | -------------------------------- | ----------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Repository-local architecture    | Guide available in this checkout and linked from README           | docs/architecture.md; README.md    | Documented and validated                                      | File, link, and diagram checks         | Keep documentation consistent with source changes                                                                                                                                                                           |
-| API composition and domain state | Preserve existing workflows and failure states                    | src/server.mjs and source map      | Implemented; application verification limits are listed below | Current source and existing app design | Shopper session ownership and staff authorization are absent. Two Windows backend tests and critical server coverage fail in the baseline; receipt-only print CSS is absent. Separate IT fixes do not change this baseline. |
+| API composition and domain state | Preserve existing workflows and failure states                    | src/server.mjs and source map      | Implemented; application verification limits are listed below | Current source and existing app design | Shopper sessions are bound to a registered kiosk by an in-memory bearer token (SCN-01); staff authorization is absent until SCN-02. Two Windows backend tests and critical server coverage fail in the baseline. Separate IT fixes do not change this baseline. |
 | Public deployment                | Verified identity, data durability, recovery, and hosted behavior | Existing deployment/API boundaries | Needs separate hardening/verification                         | No new hosted evidence                 | Local checks do not establish production readiness                                                                                                                                                                          |
 
 ## 13. Dated verification and limitations
@@ -452,7 +466,7 @@ Last documentation review: **2026-11-09**. The checks below distinguish document
 - Repository-local guide, README link, source-path references, section/contents anchors, and Mermaid syntax: passed documentation validation.
 - New application tests/builds, coverage, dependency audits, browser/device accessibility/performance, hosted CI, and Vercel deployment: **not rerun for the documentation updates**.
 - Frontend production builds passed on 2026-11-09 with Node 24.15.0. Build success does not establish that all application quality gates pass.
-- Outstanding baseline limit: Shopper session ownership and staff authorization are absent. Two Windows backend tests and critical server coverage fail in the baseline; receipt-only print CSS is absent. Separate IT fixes do not change this baseline.
+- Outstanding baseline limit: Shopper sessions are bound to a registered kiosk by an in-memory bearer token (SCN-01); staff authorization is absent until SCN-02. Two Windows backend tests and critical server coverage fail in the baseline. Separate IT fixes do not change this baseline.
 
 The baseline results below record earlier validation. Re-run the listed commands against the current revision before release.
 

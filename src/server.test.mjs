@@ -4,48 +4,8 @@ import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { contentModelSchema } from "./content-model.schema.mjs";
-import {
-  addLocalE2EOrigin,
-  createApiServer,
-  loadModel,
-  parseModelText,
-  readAllowedOrigins,
-  resolveServerSettings,
-} from "./server.mjs";
-
-async function startApi(t, overrides = {}) {
-  const api = createApiServer({ databasePath: ":memory:", ...overrides });
-  await new Promise((resolveListen, rejectListen) => {
-    api.server.once("error", rejectListen);
-    api.server.listen(0, "127.0.0.1", resolveListen);
-  });
-  t.after(() => api.close());
-  const address = api.server.address();
-  return `http://127.0.0.1:${address.port}/api/v1`;
-}
-
-async function startSession(baseUrl, key = "start-session-key") {
-  const response = await fetch(`${baseUrl}/sessions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Idempotency-Key": key,
-    },
-    body: "{}",
-  });
-  return { response, payload: await response.json() };
-}
-
-async function postJson(baseUrl, path, key, payload = {}) {
-  return fetch(`${baseUrl}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Idempotency-Key": key,
-    },
-    body: JSON.stringify(payload),
-  });
-}
+import { credentialHeaders, getJson, postJson, startApi, startSession } from "../test-support/api-client.mjs";
+import { addLocalE2EOrigin, loadModel, parseModelText, readAllowedOrigins, resolveServerSettings } from "./server.mjs";
 
 test("health and catalog expose readiness and synthetic products", async (t) => {
   const baseUrl = await startApi(t);
@@ -116,6 +76,7 @@ test("session start and scan replay are idempotent and totals use API prices", a
     headers: {
       "Content-Type": "application/json",
       "Idempotency-Key": "scan-idempotency-key",
+      ...credentialHeaders(`/sessions/${sessionId}`),
     },
     body: JSON.stringify({ barcode: "QS-BRD-031", source: "barcode" }),
   };
@@ -142,6 +103,7 @@ test("a new session after reset starts with a separate empty basket", async (t) 
     headers: {
       "Content-Type": "application/json",
       "Idempotency-Key": "previous-session-scan",
+      ...credentialHeaders(`/sessions/${previousSessionId}`),
     },
     body: JSON.stringify({ barcode: "QS-BRD-031", source: "barcode" }),
   });
@@ -151,6 +113,7 @@ test("a new session after reset starts with a separate empty basket", async (t) 
     headers: {
       "Content-Type": "application/json",
       "Idempotency-Key": "previous-session-reset",
+      ...credentialHeaders(`/sessions/${previousSessionId}`),
     },
     body: "{}",
   });
@@ -181,6 +144,7 @@ test("invalid barcodes return a request-correlated safe error", async (t) => {
     headers: {
       "Content-Type": "application/json",
       "Idempotency-Key": "unknown-item-key",
+      ...credentialHeaders(`/sessions/${payload.data.id}`),
     },
     body: JSON.stringify({ barcode: "UNKNOWN", source: "barcode" }),
   });
@@ -230,11 +194,12 @@ test("checkout without an item is rejected without advancing state", async (t) =
     headers: {
       "Content-Type": "application/json",
       "Idempotency-Key": "empty-checkout-key",
+      ...credentialHeaders(`/sessions/${payload.data.id}`),
     },
     body: "{}",
   });
   const body = await response.json();
-  const session = await fetch(`${baseUrl}/sessions/${payload.data.id}`);
+  const session = await getJson(baseUrl, `/sessions/${payload.data.id}`);
 
   assert.equal(response.status, 422);
   assert.equal(body.error.code, "EMPTY_BASKET");
@@ -245,7 +210,7 @@ test("versioned session routes complete scan, quantity, coupon, payment, receipt
   const baseUrl = await startApi(t);
   const started = await startSession(baseUrl, "route-flow-start");
   const sessionId = started.payload.data.id;
-  const initialSession = await fetch(`${baseUrl}/sessions/${sessionId}`);
+  const initialSession = await getJson(baseUrl, `/sessions/${sessionId}`);
   assert.equal((await initialSession.json()).data.state, "scanning");
 
   const batch = await postJson(baseUrl, `/sessions/${sessionId}/scan-batch`, "route-flow-batch", {
@@ -272,7 +237,7 @@ test("versioned session routes complete scan, quantity, coupon, payment, receipt
   const receiptBody = await receipt.json();
   assert.equal(receipt.status, 201);
   assert.equal(receiptBody.data.totalCents > 0, true);
-  const receiptRead = await fetch(`${baseUrl}/sessions/${sessionId}/receipt`);
+  const receiptRead = await getJson(baseUrl, `/sessions/${sessionId}/receipt`);
   assert.deepEqual((await receiptRead.json()).data, receiptBody.data);
 
   const reset = await postJson(baseUrl, `/sessions/${sessionId}/reset`, "route-flow-reset");
@@ -332,7 +297,7 @@ test("request parsing, preflight, trace propagation, and route misses return saf
 
   const emptyBody = await fetch(`${baseUrl}/sessions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Idempotency-Key": "empty-body" },
+    headers: { "Content-Type": "application/json", "Idempotency-Key": "empty-body", "X-Kiosk-Id": "kiosk-01" },
   });
   assert.equal(emptyBody.status, 201);
 

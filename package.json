@@ -11,10 +11,10 @@
     "start": "node src/server.mjs",
     "test": "node --test",
     "test:coverage": "c8 --all --include='src/**/*.mjs' --exclude='src/**/*.test.mjs' --check-coverage --lines 90 --statements 90 --functions 90 --branches 90 --reporter=text --reporter=lcov --reporter=json-summary --report-dir=coverage node --test && node scripts/check-critical-coverage.mjs",
-    "check": "node --check src/server.mjs && node --check src/routes.mjs && node --check src/content-model.schema.mjs && node --check src/checkout.machine.mjs && node --check src/checkout.schema.mjs && node --check src/checkout.repository.mjs && node --check src/checkout.service.mjs && node --check scripts/check-critical-coverage.mjs",
+    "check": "node --check src/server.mjs && node --check src/routes.mjs && node --check src/content-model.schema.mjs && node --check src/checkout.machine.mjs && node --check src/checkout.schema.mjs && node --check src/checkout.repository.mjs && node --check src/checkout.service.mjs && node --check scripts/check-critical-coverage.mjs && node --check src/access.repository.mjs && node --check src/access.service.mjs && node --check src/identity.mjs && node --check src/migrations.mjs && node --check src/errors.mjs && node --check src/sqlite-transaction.mjs",
     "lint": "eslint . --max-warnings=0",
-    "format": "prettier --write \"src/**/*.mjs\" \"scripts/**/*.mjs\" \"*.mjs\" \"*.yaml\"",
-    "format:check": "prettier --check \"src/**/*.mjs\" \"scripts/**/*.mjs\" \"*.mjs\" \"*.yaml\""
+    "format": "prettier --write \"src/**/*.mjs\" \"scripts/**/*.mjs\" \"test-support/**/*.mjs\" \"*.mjs\" \"*.yaml\"",
+    "format:check": "prettier --check \"src/**/*.mjs\" \"scripts/**/*.mjs\" \"test-support/**/*.mjs\" \"*.mjs\" \"*.yaml\""
   },
   "overrides": {
     "glob": "14.0.2",

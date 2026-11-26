@@ -1,0 +1,15 @@
+{
+  "synthetic": true,
+  "business": "quickstop",
+  "locations": ["store-01", "store-02"],
+  "kiosks": [
+    { "id": "kiosk-01", "locationId": "store-01" },
+    { "id": "kiosk-02", "locationId": "store-01" },
+    { "id": "kiosk-03", "locationId": "store-02" }
+  ],
+  "staff": [
+    { "code": "att-01", "name": "Attendant Alder", "locationId": "store-01", "pin": "246810" },
+    { "code": "att-02", "name": "Attendant Birch", "locationId": "store-01", "pin": "135790" },
+    { "code": "att-03", "name": "Attendant Cedar", "locationId": "store-02", "pin": "112358" }
+  ]
+}
