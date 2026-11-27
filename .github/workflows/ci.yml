@@ -9,6 +9,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check out the matching frontend for the content model
+        run: |
+          repo=https://github.com/gopichand-retail-apps/scango-frontend.git
+          ref="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          git ls-remote --exit-code --heads "$repo" "$ref" > /dev/null || ref=main
+          git clone --depth 1 --branch "$ref" "$repo" ../scango-frontend
       - uses: actions/setup-node@v4
         with:
           node-version: 22
