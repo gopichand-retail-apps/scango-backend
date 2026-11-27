@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
+import { createAccessService } from "./access.service.mjs";
 import { createCheckoutRepository } from "./checkout.repository.mjs";
 import { APP_VERSION } from "./app-version.mjs";
 import { createCheckoutService, CheckoutError } from "./checkout.service.mjs";
@@ -10,6 +11,8 @@ import { createRouteRegistry, resolveRoute } from "./routes.mjs";
 
 const modelPath = fileURLToPath(new URL("../../scango-frontend/public/scango-model.json", import.meta.url));
 const idempotencyPattern = /^[a-zA-Z0-9._:-]{1,128}$/;
+const bearerPattern = /^Bearer ([A-Za-z0-9_-]{20,128})$/;
+const kioskIdPattern = /^[a-z0-9-]{1,40}$/;
 const defaultAllowedOrigins = ["http://127.0.0.1:5111", "http://localhost:5111"];
 const defaultRateLimit = 160;
 const defaultRateWindowMs = 60_000;
@@ -109,6 +112,23 @@ function requireIdempotencyKey(request, model) {
   return key;
 }
 
+// Adopt a well-formed client X-Request-ID so one kiosk attempt can be traced end to end.
+function resolveRequestId(request) {
+  const clientRequestId = request.headers["x-request-id"];
+  return typeof clientRequestId === "string" && idempotencyPattern.test(clientRequestId)
+    ? clientRequestId
+    : randomUUID();
+}
+
+function readCredentials(request) {
+  const authorization = request.headers.authorization;
+  const kioskId = request.headers["x-kiosk-id"];
+  return {
+    bearer: typeof authorization === "string" ? (bearerPattern.exec(authorization)?.[1] ?? null) : null,
+    kioskId: typeof kioskId === "string" && kioskIdPattern.test(kioskId) ? kioskId : null,
+  };
+}
+
 function setResponseHeaders(request, response, allowedOrigins, model, requestId, traceId) {
   response.setHeader("X-Request-ID", requestId);
   response.setHeader("X-Trace-ID", traceId);
@@ -124,11 +144,15 @@ function setResponseHeaders(request, response, allowedOrigins, model, requestId,
   if (!origin) return;
   response.setHeader("Access-Control-Allow-Origin", origin);
   response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  response.setHeader("Access-Control-Allow-Headers", "Content-Type, Idempotency-Key, Traceparent");
+  response.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Idempotency-Key, Traceparent, Authorization, X-Kiosk-Id, X-Request-ID",
+  );
   response.setHeader("Access-Control-Expose-Headers", "X-Request-ID, X-Trace-ID");
 }
 
-async function dispatchRequest(request, url, routes, model, isRateLimited) {
+async function dispatchRequest(request, url, context, requestId) {
+  const { routes, model, isRateLimited } = context;
   if (isRateLimited(request.socket.remoteAddress ?? "local")) {
     throw new RequestError(429, "RATE_LIMITED", model.messages.errors.rateLimited);
   }
@@ -136,6 +160,12 @@ async function dispatchRequest(request, url, routes, model, isRateLimited) {
   if (!resolved) {
     throw new RequestError(404, "NOT_FOUND", model.messages.errors.notFound);
   }
+  const { bearer, kioskId } = readCredentials(request);
+  // Authorize before reading the body or replaying an idempotent result.
+  if (resolved.access === "session") {
+    context.access.authorizeSession({ sessionId: resolved.sessionId, bearer, kioskId, requestId });
+  }
+  const staff = resolved.access === "staff" ? context.access.authorizeStaff(bearer) : undefined;
   const body =
     request.method === "POST"
       ? parseBody(resolved.route.schema, await readJsonBody(request, model.data.app.maximumBodyBytes), model)
@@ -144,13 +174,13 @@ async function dispatchRequest(request, url, routes, model, isRateLimited) {
   return {
     status: resolved.route.status,
     routeTemplate: resolved.route.template,
-    data: resolved.route.execute({ sessionId: resolved.sessionId, body, key }),
+    data: resolved.route.execute({ sessionId: resolved.sessionId, body, key, kioskId, requestId, staff }),
   };
 }
 
 async function handleApiRequest(request, response, context) {
   const startedAt = performance.now();
-  const requestId = randomUUID();
+  const requestId = resolveRequestId(request);
   const { traceId, spanId } = getTraceIds(request);
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   let status = 500;
@@ -164,7 +194,7 @@ async function handleApiRequest(request, response, context) {
       response.end();
       return;
     }
-    const result = await dispatchRequest(request, url, context.routes, context.model, context.isRateLimited);
+    const result = await dispatchRequest(request, url, context, requestId);
     status = result.status;
     routeTemplate = result.routeTemplate;
     sendJson(response, status, { data: result.data });
@@ -176,7 +206,7 @@ async function handleApiRequest(request, response, context) {
         ? error.message
         : context.model.messages.errors.server;
     sendJson(response, status, {
-      error: { code: errorCode, message, requestId },
+      error: { code: errorCode, message, requestId, ...(error instanceof CheckoutError ? error.details : {}) },
     });
   } finally {
     writeLog({
@@ -204,12 +234,15 @@ export function createApiServer({
   allowedOrigins = defaultAllowedOrigins,
   rateLimit = defaultRateLimit,
   rateWindowMs = defaultRateWindowMs,
+  now = () => new Date(),
 } = {}) {
   const repository = createCheckoutRepository({ databasePath, model });
-  const service = createCheckoutService({ repository, model });
-  const routes = createRouteRegistry(service, model);
+  const service = createCheckoutService({ repository, model, now });
+  const access = createAccessService({ repository, model, now });
+  access.expireOverdue();
+  const routes = createRouteRegistry(service, model, access);
   const isRateLimited = createRateLimiter(rateLimit, rateWindowMs);
-  const context = { model, routes, isRateLimited, allowedOrigins };
+  const context = { model, routes, isRateLimited, allowedOrigins, access };
   const server = createServer((request, response) => handleApiRequest(request, response, context));
 
   return {
@@ -266,6 +299,17 @@ export function readAllowedOrigins(value = process.env.SCANGO_ALLOWED_ORIGINS) {
   return [...new Set(origins)];
 }
 
+// Requests per minute per client address. The default stays 160; an isolated test API serving a whole browser
+// suite from one loopback address may raise it. Bounded so the control cannot be switched off.
+export function readRateLimit(value = process.env.SCANGO_RATE_LIMIT_PER_MINUTE) {
+  if (value === undefined) return defaultRateLimit;
+  const limit = /^\d+$/.test(value) ? Number(value) : Number.NaN;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100_000) {
+    throw new Error("SCANGO_RATE_LIMIT_PER_MINUTE must be a whole number from 1 to 100000.");
+  }
+  return limit;
+}
+
 export function resolveServerSettings(environment = process.env) {
   return {
     databasePath: environment.SCANGO_DB_PATH ?? fileURLToPath(new URL("../data/scango.sqlite", import.meta.url)),
@@ -279,6 +323,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     databasePath: settings.databasePath,
     model: loadModel(),
     allowedOrigins: addLocalE2EOrigin(readAllowedOrigins()),
+    rateLimit: readRateLimit(),
   });
   const port = settings.port;
   api.server.listen(port, "127.0.0.1", () => {

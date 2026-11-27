@@ -1,14 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { transition } from "./checkout.machine.mjs";
+import { CheckoutError } from "./errors.mjs";
+import { fingerprintOf } from "./identity.mjs";
+import { createInterventionService } from "./intervention.service.mjs";
 
-export class CheckoutError extends Error {
-  constructor(status, code, message) {
-    super(message);
-    this.name = "CheckoutError";
-    this.status = status;
-    this.code = code;
-  }
-}
+export { CheckoutError };
 
 function requireSession(repository, sessionId, model) {
   const session = repository.getSession(sessionId);
@@ -48,10 +44,18 @@ function calculateTotals(session, coupon, model) {
   };
 }
 
-function presentSession(repository, model, sessionId) {
+function secondsUntil(expiresAt, now) {
+  return expiresAt === null ? null : Math.max(0, Math.ceil((Date.parse(expiresAt) - now().getTime()) / 1000));
+}
+
+function presentSession(repository, model, sessionId, now) {
   const session = requireSession(repository, sessionId, model);
   const coupon = session.couponCode ? repository.getCoupon(session.couponCode) : null;
-  return { ...session, ...calculateTotals(session, coupon, model) };
+  return {
+    ...session,
+    ...calculateTotals(session, coupon, model),
+    expiresInSeconds: secondsUntil(session.expiresAt, now),
+  };
 }
 
 function clearIneligibleCoupon(repository, model, sessionId, now) {
@@ -78,21 +82,55 @@ export function createCheckoutService({ repository, model, now = () => new Date(
     return now().toISOString();
   }
 
+  // One intent, one stored result: the same key replays; the same key with a different payload is refused.
+  function once(scope, key, payload, work) {
+    return repository.runIdempotently(scope, key, work, fingerprintOf(payload));
+  }
+
+  const interventions = createInterventionService({
+    repository,
+    model,
+    timestamp,
+    rules: { requireSession, requireState, clearIneligibleCoupon },
+  });
+
   function catalog() {
     return { categories: model.data.categories, products: repository.listProducts() };
   }
 
-  function startSession(key) {
-    return repository.runIdempotently("session:start", key, () => {
-      const sessionId = randomUUID();
-      const createdAt = timestamp();
-      repository.createSession(sessionId, transition("idle", "START_SESSION"), createdAt);
-      return presentSession(repository, model, sessionId);
+  function requireKiosk(kioskId) {
+    const kiosk = kioskId ? repository.access.getKiosk(kioskId) : null;
+    if (!kiosk) throw new CheckoutError(403, "KIOSK_NOT_REGISTERED", model.messages.kioskNotRecognised);
+    return kiosk;
+  }
+
+  function startSession(key, kioskId) {
+    const kiosk = requireKiosk(kioskId);
+    const record = repository.runIdempotently(
+      "session:start",
+      key,
+      () => {
+        const sessionId = randomUUID();
+        const binding = { businessId: kiosk.businessId, locationId: kiosk.locationId, kioskId: kiosk.id };
+        repository.createSession(sessionId, transition("idle", "START_SESSION"), timestamp(), binding);
+        return { sessionId };
+      },
+      fingerprintOf({ kioskId }),
+    );
+    return presentSession(repository, model, record.sessionId ?? record.id, now);
+  }
+
+  function extendSession(sessionId, key) {
+    once(`session:${sessionId}:extend`, key, {}, () => {
+      requireSession(repository, sessionId, model);
+      repository.touchSession(sessionId, timestamp());
+      return { sessionId };
     });
+    return presentSession(repository, model, sessionId, now);
   }
 
   function getSession(sessionId) {
-    return presentSession(repository, model, sessionId);
+    return presentSession(repository, model, sessionId, now);
   }
 
   function scanOne(sessionId, barcode, source, key) {
@@ -119,18 +157,18 @@ export function createCheckoutService({ repository, model, now = () => new Date(
       now: currentTime,
     });
     repository.updateSession(sessionId, { state: nextState }, currentTime);
-    return presentSession(repository, model, sessionId);
+    return presentSession(repository, model, sessionId, now);
   }
 
   function scan(sessionId, barcode, source, key) {
-    return repository.runIdempotently(`session:${sessionId}:scan`, key, () => scanOne(sessionId, barcode, source, key));
+    return once(`session:${sessionId}:scan`, key, { barcode, source }, () => scanOne(sessionId, barcode, source, key));
   }
 
   function scanBatch(sessionId, barcodes, key) {
     if (!barcodes.length || barcodes.length > model.data.app.maximumScanBatch) {
       throw new CheckoutError(422, "INVALID_SCAN_BATCH", model.messages.errors.invalidRequest);
     }
-    return repository.runIdempotently(`session:${sessionId}:scan-batch`, key, () => {
+    return once(`session:${sessionId}:scan-batch`, key, { barcodes }, () => {
       let result;
       barcodes.forEach((barcode, index) => {
         result = scanOne(sessionId, barcode, "barcode", `${key}:${index}`);
@@ -143,7 +181,7 @@ export function createCheckoutService({ repository, model, now = () => new Date(
   }
 
   function adjustQuantity(sessionId, productId, delta, key) {
-    return repository.runIdempotently(`session:${sessionId}:quantity`, key, () => {
+    return once(`session:${sessionId}:quantity`, key, { productId, delta }, () => {
       const session = requireSession(repository, sessionId, model);
       requireState(session, ["scanning"], model);
       const item = session.items.find((line) => line.productId === productId);
@@ -175,17 +213,17 @@ export function createCheckoutService({ repository, model, now = () => new Date(
       });
       repository.updateSession(sessionId, { state: nextState }, currentTime);
       clearIneligibleCoupon(repository, model, sessionId, currentTime);
-      return presentSession(repository, model, sessionId);
+      return presentSession(repository, model, sessionId, now);
     });
   }
 
   function applyCoupon(sessionId, rawCode, key) {
-    return repository.runIdempotently(`session:${sessionId}:coupon`, key, () => {
+    return once(`session:${sessionId}:coupon`, key, { code: rawCode }, () => {
       const session = requireSession(repository, sessionId, model);
       requireState(session, ["scanning"], model);
       if (!rawCode) {
         repository.setCoupon(sessionId, null, timestamp());
-        return presentSession(repository, model, sessionId);
+        return presentSession(repository, model, sessionId, now);
       }
       const coupon = repository.getCoupon(rawCode.toUpperCase());
       if (!coupon) {
@@ -197,12 +235,12 @@ export function createCheckoutService({ repository, model, now = () => new Date(
       const currentTime = timestamp();
       repository.setCoupon(sessionId, coupon.code, currentTime);
       repository.updateSession(sessionId, { state: transition(session.state, "APPLY_COUPON") }, currentTime);
-      return presentSession(repository, model, sessionId);
+      return presentSession(repository, model, sessionId, now);
     });
   }
 
   function checkWeight(sessionId, simulatedWeightGrams, key) {
-    return repository.runIdempotently(`session:${sessionId}:weight`, key, () => {
+    return once(`session:${sessionId}:weight`, key, { simulatedWeightGrams }, () => {
       const session = requireSession(repository, sessionId, model);
       requireState(session, ["weight_check_pending"], model);
       const item = session.pendingWeight;
@@ -217,39 +255,12 @@ export function createCheckoutService({ repository, model, now = () => new Date(
         { state: transition(session.state, passed ? "SCALE_PASSED" : "SCALE_MISMATCH") },
         currentTime,
       );
-      return presentSession(repository, model, sessionId);
-    });
-  }
-
-  function intervene(sessionId, action, key) {
-    return repository.runIdempotently(`session:${sessionId}:intervention`, key, () => {
-      const session = requireSession(repository, sessionId, model);
-      requireState(session, ["attention_required"], model);
-      const item = session.pendingWeight;
-      if (!item) {
-        throw new CheckoutError(409, "INTERVENTION_NOT_REQUIRED", model.messages.errors.invalidState);
-      }
-      const currentTime = timestamp();
-      const event = action === "approve_weight" ? "APPROVE_WEIGHT" : "REMOVE_ATTENTION_ITEM";
-      if (action === "approve_weight") {
-        repository.updateItemWeight(sessionId, item.productId, "passed");
-      } else {
-        repository.removeItem(sessionId, item.productId);
-      }
-      repository.recordIntervention({
-        sessionId,
-        productId: item.productId,
-        action,
-        now: currentTime,
-      });
-      repository.updateSession(sessionId, { state: transition(session.state, event) }, currentTime);
-      clearIneligibleCoupon(repository, model, sessionId, currentTime);
-      return presentSession(repository, model, sessionId);
+      return presentSession(repository, model, sessionId, now);
     });
   }
 
   function prepareCheckout(sessionId, key) {
-    return repository.runIdempotently(`session:${sessionId}:checkout`, key, () => {
+    return once(`session:${sessionId}:checkout`, key, {}, () => {
       const session = requireSession(repository, sessionId, model);
       requireState(session, ["scanning"], model);
       if (!session.items.length) {
@@ -258,12 +269,12 @@ export function createCheckoutService({ repository, model, now = () => new Date(
       assertNoPendingWeight(session, model);
       const currentTime = timestamp();
       repository.updateSession(sessionId, { state: transition(session.state, "BEGIN_CHECKOUT") }, currentTime);
-      return presentSession(repository, model, sessionId);
+      return presentSession(repository, model, sessionId, now);
     });
   }
 
   function simulateTender(sessionId, method, outcome, key) {
-    return repository.runIdempotently(`session:${sessionId}:tender`, key, () => {
+    return once(`session:${sessionId}:tender`, key, { method, outcome }, () => {
       const session = requireSession(repository, sessionId, model);
       requireState(session, ["ready_to_pay"], model);
       if (!model.data.simulator.tenderMethods.includes(method) || !model.data.simulator.outcomes.includes(outcome)) {
@@ -293,7 +304,7 @@ export function createCheckoutService({ repository, model, now = () => new Date(
         currentTime,
       );
       return {
-        session: presentSession(repository, model, sessionId),
+        session: presentSession(repository, model, sessionId, now),
         approved,
         message: model.messages[approved ? "paymentApproved" : "paymentDeclined"],
       };
@@ -301,7 +312,7 @@ export function createCheckoutService({ repository, model, now = () => new Date(
   }
 
   function issueReceipt(sessionId, key) {
-    return repository.runIdempotently(`session:${sessionId}:receipt`, key, () => {
+    return once(`session:${sessionId}:receipt`, key, {}, () => {
       const session = requireSession(repository, sessionId, model);
       const existing = repository.getReceipt(sessionId);
       if (existing) return existing;
@@ -337,13 +348,26 @@ export function createCheckoutService({ repository, model, now = () => new Date(
     });
   }
 
-  function resetSession(sessionId, key) {
-    return repository.runIdempotently(`session:${sessionId}:reset`, key, () => {
+  function resetSession(sessionId, key, context = {}) {
+    return once(`session:${sessionId}:reset`, key, {}, () => {
       const session = requireSession(repository, sessionId, model);
       if (session.state === "reset") return { sessionId, state: "reset" };
       const currentTime = timestamp();
       const state = transition(session.state, "RESET");
-      repository.updateSession(sessionId, { state, resetAt: currentTime }, currentTime);
+      repository.updateSession(sessionId, { state, resetAt: currentTime, tokenDigest: null }, currentTime);
+      const { kioskId, locationId } = repository.getSessionAccess(sessionId);
+      repository.access.recordAudit(
+        {
+          at: currentTime,
+          actorType: "kiosk",
+          actorId: kioskId,
+          action: "session.reset",
+          sessionId,
+          locationId,
+          result: "success",
+        },
+        { requestId: context.requestId },
+      );
       return { sessionId, state };
     });
   }
@@ -360,12 +384,13 @@ export function createCheckoutService({ repository, model, now = () => new Date(
       return receipt;
     },
     startSession,
+    extendSession,
     scan,
     scanBatch,
     adjustQuantity,
     applyCoupon,
     checkWeight,
-    intervene,
+    intervene: interventions.intervene,
     prepareCheckout,
     simulateTender,
     issueReceipt,

@@ -49,3 +49,19 @@ test("the checkout state machine exposes every allowed event and rejects unknown
     (error) => error instanceof TransitionError && error.status === 409 && error.code === "INVALID_STATE",
   );
 });
+
+test("every open state can expire and expired is terminal", () => {
+  const openStates = [
+    "scanning",
+    "weight_check_pending",
+    "attention_required",
+    "ready_to_pay",
+    "paid",
+    "receipt_issued",
+  ];
+  for (const state of openStates) {
+    assert.equal(transition(state, "EXPIRE"), "expired");
+  }
+  assert.deepEqual(getAllowedEvents("expired"), []);
+  assert.throws(() => transition("reset", "EXPIRE"), TransitionError);
+});

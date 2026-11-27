@@ -2,12 +2,18 @@ openapi: 3.1.0
 info:
   title: ScanGo Checkout API
   version: 1.0.0
-  description: Local synthetic checkout simulator; no live payment processing or identity authorization.
+  description: >-
+    Local synthetic checkout simulator; no live payment processing. Shopper sessions are bound to a registered
+    kiosk by a bearer token returned once by POST /sessions. Attendants sign in with a synthetic staff code and PIN;
+    only a staff token at the session's location can resolve an exception.
 servers:
   - url: http://127.0.0.1:5112/api/v1
+security:
+  - SessionToken: []
 paths:
   /version:
     get:
+      security: []
       operationId: getApplicationVersion
       summary: Read the backend artifact version
       responses:
@@ -30,6 +36,7 @@ paths:
                       version: { type: string, pattern: '^\\d+\\.\\d+\\.\\d+$' }
   /health:
     get:
+      security: []
       responses:
         "200":
           description: API and local SQLite readiness.
@@ -39,13 +46,16 @@ paths:
                 $ref: "#/components/schemas/HealthEnvelope"
   /catalog:
     get:
+      security: []
       responses:
         "200":
           description: Synthetic catalog with API-owned prices and weight settings.
   /sessions:
     post:
+      security: []
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/KioskId"
       requestBody:
         content:
           application/json:
@@ -54,21 +64,33 @@ paths:
               additionalProperties: false
       responses:
         "201":
-          description: New scanning session or idempotent replay.
+          description: >-
+            New kiosk-bound scanning session, or an idempotent replay from the same kiosk. Includes accessToken
+            (returned once; a replay rotates it), version, expiresAt and expiresInSeconds.
         "400":
           $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/KioskNotRegistered"
+        "409":
+          description: IDEMPOTENCY_KEY_REUSED when the key was first used by another kiosk.
   /sessions/{sessionId}:
     parameters:
       - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/KioskId"
     get:
       responses:
         "200":
-          description: Server-calculated session, basket, and integer-cent totals.
+          description: >-
+            Server-calculated session, basket, integer-cent totals, version, expiresAt and expiresInSeconds.
+            A read does not extend the idle expiry.
         "404":
           $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/SessionExpired"
   /sessions/{sessionId}/scan:
     parameters:
       - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/KioskId"
     post:
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -93,6 +115,7 @@ paths:
   /sessions/{sessionId}/scan-batch:
     parameters:
       - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/KioskId"
     post:
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -118,6 +141,7 @@ paths:
   /sessions/{sessionId}/quantity:
     parameters:
       - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/KioskId"
     post:
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -140,6 +164,7 @@ paths:
   /sessions/{sessionId}/coupon:
     parameters:
       - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/KioskId"
     post:
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -161,6 +186,7 @@ paths:
   /sessions/{sessionId}/weight-check:
     parameters:
       - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/KioskId"
     post:
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -192,17 +218,31 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [action]
+              required: [action, reasonCode, productId, expectedVersion]
               properties:
                 action: { type: string, enum: [approve_weight, remove_item] }
+                reasonCode: { type: string, enum: [weight_verified, item_mismatch, scale_fault, customer_assist] }
+                productId: { type: string, minLength: 1, maxLength: 64 }
+                expectedVersion: { type: integer, minimum: 0 }
+      security:
+        - StaffToken: []
       responses:
         "200":
-          description: Simulated attendant action and updated session.
+          description: Decision recorded; returns sessionId, state and the new version.
+        "403":
+          description: STAFF_REQUIRED; no valid staff token (a shopper token is not enough).
+        "404":
+          description: SESSION_NOT_FOUND; unknown session or a session at another location.
+        "410":
+          description: SESSION_EXPIRED; the shopper session passed its idle expiry. It is closed and records are kept.
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: >-
+            SESSION_VERSION_CONFLICT (error.current carries sessionId, state, version), INTERVENTION_LINE_MISMATCH,
+            INTERVENTION_NOT_REQUIRED or INVALID_STATE.
   /sessions/{sessionId}/checkout:
     parameters:
       - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/KioskId"
     post:
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -222,6 +262,7 @@ paths:
   /sessions/{sessionId}/tenders:
     parameters:
       - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/KioskId"
     post:
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -244,12 +285,15 @@ paths:
   /sessions/{sessionId}/receipt:
     parameters:
       - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/KioskId"
     get:
       responses:
         "200":
           description: Persisted receipt snapshot.
         "404":
           $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/SessionExpired"
     post:
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -267,6 +311,7 @@ paths:
   /sessions/{sessionId}/reset:
     parameters:
       - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/KioskId"
     post:
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -278,16 +323,103 @@ paths:
               additionalProperties: false
       responses:
         "200":
-          description: Persisted reset state; previous session records remain available.
+          description: Persisted reset state; records remain, and the session token stops working.
         "409":
           $ref: "#/components/responses/Conflict"
+  /sessions/{sessionId}/extend:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/KioskId"
+    post:
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: Session snapshot with the idle expiry reset to the full window; version is unchanged.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/SessionExpired"
+  /staff/sessions:
+    post:
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code, pin]
+              properties:
+                code: { type: string, pattern: "^[a-z0-9-]{1,40}$" }
+                pin: { type: string, pattern: "^\\d{4,8}$" }
+      responses:
+        "201":
+          description: Staff token (returned once), expiresAt, and the staff code, name and location.
+        "401":
+          description: STAFF_AUTH_FAILED; identical for an unknown code and a wrong PIN.
+        "429":
+          description: STAFF_THROTTLED; five failures for this code within a minute.
+  /staff/sign-out:
+    post:
+      security:
+        - StaffToken: []
+      responses:
+        "200":
+          description: The staff token stops working.
+        "403":
+          description: STAFF_REQUIRED.
+  /staff/exceptions:
+    get:
+      security:
+        - StaffToken: []
+      responses:
+        "200":
+          description: >-
+            Up to 50 attention_required sessions at the attendant's location, oldest first, each with sessionId,
+            version, since and the affected line (productId, name, expectedWeightGrams). No totals or receipts.
+        "403":
+          description: STAFF_REQUIRED.
 components:
+  securitySchemes:
+    StaffToken:
+      type: http
+      scheme: bearer
+      description: Opaque token from POST /staff/sessions; 15 idle minutes; bound to the attendant's location.
+    SessionToken:
+      type: http
+      scheme: bearer
+      description: >-
+        Opaque 256-bit token from POST /sessions, held in kiosk memory only. The API stores its SHA-256 digest.
+        Must be sent with the X-Kiosk-Id of the kiosk that started the session.
   parameters:
     IdempotencyKey:
       in: header
       name: Idempotency-Key
       required: true
+      description: >-
+        One key per user intent. The same key with the same payload replays the stored result (a lost reply plus a
+        retry changes nothing twice). The same key with a different payload returns 409 IDEMPOTENCY_KEY_REUSED.
+        A refused request stores nothing, so the key can carry the corrected request.
       schema: { type: string, minLength: 1, maxLength: 128 }
+    RequestId:
+      in: header
+      name: X-Request-ID
+      required: false
+      description: Per-attempt ID from the client; adopted when it matches ^[a-zA-Z0-9._:-]{1,128}$, otherwise replaced.
+      schema: { type: string, maxLength: 128 }
+    KioskId:
+      in: header
+      name: X-Kiosk-Id
+      required: true
+      schema: { type: string, pattern: "^[a-z0-9-]{1,40}$" }
     SessionId:
       in: path
       name: sessionId
@@ -297,9 +429,17 @@ components:
     BadRequest:
       description: Invalid JSON, request schema, or idempotency key.
     NotFound:
-      description: Session or synthetic product not found.
+      description: >-
+        Session or synthetic product not found. A wrong token, another kiosk's token, or no token returns the same
+        SESSION_NOT_FOUND response as an unknown session ID.
+    SessionExpired:
+      description: SESSION_EXPIRED; the owning kiosk's session passed its idle expiry. Records are kept.
+    KioskNotRegistered:
+      description: KIOSK_NOT_REGISTERED; X-Kiosk-Id is missing or not a registered kiosk.
     Conflict:
-      description: Checkout state does not allow the requested transition.
+      description: >-
+        INVALID_STATE when checkout state does not allow the transition, or IDEMPOTENCY_KEY_REUSED when the key was
+        first used with a different payload.
     InvalidInput:
       description: Invalid barcode, coupon, quantity, or scale input.
   schemas:

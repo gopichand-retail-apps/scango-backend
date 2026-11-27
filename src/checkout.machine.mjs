@@ -8,25 +8,30 @@ const transitions = {
     APPLY_COUPON: "scanning",
     BEGIN_CHECKOUT: "ready_to_pay",
     RESET: "reset",
+    EXPIRE: "expired",
   },
   weight_check_pending: {
     SCALE_PASSED: "scanning",
     SCALE_MISMATCH: "attention_required",
     RESET: "reset",
+    EXPIRE: "expired",
   },
   attention_required: {
     APPROVE_WEIGHT: "scanning",
     REMOVE_ATTENTION_ITEM: "scanning",
     RESET: "reset",
+    EXPIRE: "expired",
   },
   ready_to_pay: {
     PAYMENT_DECLINED: "ready_to_pay",
     PAYMENT_APPROVED: "paid",
     RESET: "reset",
+    EXPIRE: "expired",
   },
-  paid: { ISSUE_RECEIPT: "receipt_issued", RESET: "reset" },
-  receipt_issued: { RESET: "reset" },
+  paid: { ISSUE_RECEIPT: "receipt_issued", RESET: "reset", EXPIRE: "expired" },
+  receipt_issued: { RESET: "reset", EXPIRE: "expired" },
   reset: {},
+  expired: {},
 };
 
 export class TransitionError extends Error {
