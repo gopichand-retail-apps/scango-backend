@@ -1,0 +1,24 @@
+name: CI
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the matching frontend for the content model
+        run: |
+          repo=https://github.com/gopichand-retail-apps/scango-frontend.git
+          ref="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          git ls-remote --exit-code --heads "$repo" "$ref" > /dev/null || ref=main
+          git clone --depth 1 --branch "$ref" "$repo" ../scango-frontend
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build --if-present
+      - run: npm test --if-present
