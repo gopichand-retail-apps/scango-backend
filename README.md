@@ -33,7 +33,10 @@ The server loads and validates `../scango-frontend/public/scango-model.json`.
 `SCANGO_ALLOWED_ORIGINS` is a comma-separated server-side allowlist of absolute
 HTTP(S) origins; local defaults are `http://127.0.0.1:5111` and
 `http://localhost:5111`. Rate-limit defaults are server-owned, not content-model
-settings.
+settings: 160 requests per minute per client address. `SCANGO_RATE_LIMIT_PER_MINUTE`
+(a whole number from 1 to 100000) overrides it; the frontend E2E harness raises it
+for its isolated in-memory API, which serves the whole browser suite from one
+loopback address. Leave the default for real use.
 
 ## API contract
 

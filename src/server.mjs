@@ -299,6 +299,17 @@ export function readAllowedOrigins(value = process.env.SCANGO_ALLOWED_ORIGINS) {
   return [...new Set(origins)];
 }
 
+// Requests per minute per client address. The default stays 160; an isolated test API serving a whole browser
+// suite from one loopback address may raise it. Bounded so the control cannot be switched off.
+export function readRateLimit(value = process.env.SCANGO_RATE_LIMIT_PER_MINUTE) {
+  if (value === undefined) return defaultRateLimit;
+  const limit = /^\d+$/.test(value) ? Number(value) : Number.NaN;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100_000) {
+    throw new Error("SCANGO_RATE_LIMIT_PER_MINUTE must be a whole number from 1 to 100000.");
+  }
+  return limit;
+}
+
 export function resolveServerSettings(environment = process.env) {
   return {
     databasePath: environment.SCANGO_DB_PATH ?? fileURLToPath(new URL("../data/scango.sqlite", import.meta.url)),
@@ -312,6 +323,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     databasePath: settings.databasePath,
     model: loadModel(),
     allowedOrigins: addLocalE2EOrigin(readAllowedOrigins()),
+    rateLimit: readRateLimit(),
   });
   const port = settings.port;
   api.server.listen(port, "127.0.0.1", () => {
