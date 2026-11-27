@@ -67,9 +67,21 @@ export function createInterventionService({ repository, model, timestamp, rules 
     return { sessionId, state, version: repository.getSessionAccess(sessionId).version };
   }
 
+  // A shopper session past its idle window is closed, even if nothing has touched it since. Deciding on it would
+  // slide its expiry and reopen it, so expire it here (outside the decision's transaction) and refuse.
+  function rejectIdleExpired(sessionId, staff, requestId) {
+    const access = repository.getSessionAccess(sessionId);
+    if (!access || access.locationId !== staff.locationId) return;
+    const pastIdle = access.expiresAt !== null && Date.parse(timestamp()) >= Date.parse(access.expiresAt);
+    if (access.state !== "expired" && !pastIdle) return;
+    repository.access.expireSession({ sessionId, now: timestamp(), requestId });
+    throw new CheckoutError(410, "SESSION_EXPIRED", model.messages.sessionTimedOut);
+  }
+
   // Denials are audited after the transaction rolls back, so they survive it.
   function intervene(sessionId, input, key, staff, context = {}) {
     try {
+      rejectIdleExpired(sessionId, staff, context.requestId);
       return repository.runIdempotently(
         `session:${sessionId}:intervention`,
         key,

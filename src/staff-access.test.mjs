@@ -222,6 +222,29 @@ test("staff sessions end at sign-out and after 15 idle minutes", async (t) => {
   assert.equal((await staffRequest(baseUrl, "/staff/exceptions", second)).status, 403);
 });
 
+test("a stale console cannot act on a session past its idle expiry, and the session stays expired", async (t) => {
+  const clock = createClock();
+  const databasePath = createTempDatabase();
+  const baseUrl = await startApi(t, { databasePath, now: clock.now });
+  const target = await driveToAttention(baseUrl, "stale-console");
+  const token = await signedIn(baseUrl, "att-01");
+
+  clock.advance(181);
+  const response = await resolve(baseUrl, token, target, "stale-console-approve");
+  const inspector = openInspector(t, databasePath);
+  const session = inspector
+    .prepare("SELECT state, closed_reason FROM checkout_sessions WHERE id = ?")
+    .get(target.sessionId);
+  const decisions = inspector
+    .prepare("SELECT COUNT(*) AS n FROM interventions WHERE session_id = ?")
+    .get(target.sessionId);
+
+  assert.equal(response.status, 410);
+  assert.equal((await response.json()).error.code, "SESSION_EXPIRED");
+  assert.deepEqual({ ...session }, { state: "expired", closed_reason: "idle_timeout" });
+  assert.equal(decisions.n, 0);
+});
+
 test("expired shopper sessions drop off the exception list", async (t) => {
   const clock = createClock();
   const baseUrl = await startApi(t, { now: clock.now });

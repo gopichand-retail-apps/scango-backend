@@ -210,7 +210,7 @@ sequenceDiagram
   API-->>UI: sessionId, state, version
 ```
 
-**Precondition:** a scale mismatch is in `attention_required` and an attendant is signed in at the same location. **Success:** approval marks the simulated check resolved, or removal deletes the blocked line; the decision records staff code, reason, line and session version. **Failure/recovery:** a shopper token gets `403 STAFF_REQUIRED`; another location gets `404`; a stale version gets `409 SESSION_VERSION_CONFLICT` with the current state, which the console uses to refresh; the wrong line gets `409 INTERVENTION_LINE_MISMATCH`. Denials are audited after the transaction rolls back. **Concurrency:** two attendants on the same version produce one decision and one success audit row; the unique `(session_id, product_id, session_version)` index enforces it in storage.
+**Precondition:** a scale mismatch is in `attention_required` and an attendant is signed in at the same location. **Success:** approval marks the simulated check resolved, or removal deletes the blocked line; the decision records staff code, reason, line and session version. **Failure/recovery:** a shopper token gets `403 STAFF_REQUIRED`; another location gets `404`; a stale version gets `409 SESSION_VERSION_CONFLICT` with the current state, which the console uses to refresh; the wrong line gets `409 INTERVENTION_LINE_MISMATCH`; a session past its idle expiry gets `410 SESSION_EXPIRED` and is closed rather than reopened by the decision. Denials are audited after the transaction rolls back. **Concurrency:** two attendants on the same version produce one decision and one success audit row; the unique `(session_id, product_id, session_version)` index enforces it in storage.
 
 #### 7. Review checkout totals
 

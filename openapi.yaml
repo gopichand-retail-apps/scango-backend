@@ -233,6 +233,8 @@ paths:
           description: STAFF_REQUIRED; no valid staff token (a shopper token is not enough).
         "404":
           description: SESSION_NOT_FOUND; unknown session or a session at another location.
+        "410":
+          description: SESSION_EXPIRED; the shopper session passed its idle expiry. It is closed and records are kept.
         "409":
           description: >-
             SESSION_VERSION_CONFLICT (error.current carries sessionId, state, version), INTERVENTION_LINE_MISMATCH,
